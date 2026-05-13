@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIA - Gestión de Asistencia</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="pantalla-login" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; width: 100%;">
+        <div class="registro-card">
+            <h2 style="text-align: center; margin-bottom: 20px;">Acceso Restringido</h2>
+            <div class="campo">
+                <input type="text" id="login_user" placeholder="Usuario">
+            </div>
+            <div class="campo">
+                <input type="password" id="login_pass" placeholder="Contraseña">
+            </div>
+            <button class="btn-guardar" onclick="iniciarSesion()">Ingresar al Sistema</button>
+        </div>
+    </div>
+
+    <div id="dashboard" style="display: none; width: 100%;">
+        <div class="sidebar">
+            <h2>Panel Supervisor</h2>
+            <button onclick="mostrarPantalla('entrada')">Registro de Entrada</button>
+            <button onclick="mostrarPantalla('salida')">Registro de Salida</button>
+            <button onclick="mostrarPantalla('gestion')" style="background: #16a085; margin-top: 30px;">Gestión de Personal</button>
+            <button id="btn-logout" onclick="cerrarSesion()">Cerrar Sesión</button>
+        </div>
+
+        <div class="main-content">
+            <div id="seccion-asistencia">
+            <div class="header-asistencia">
+                <h1 id="titulo-pantalla">Registro de Entrada</h1>
+                <input type="text" id="busqueda_rapida" placeholder="Buscar por Nombre o DNI..." onkeyup="filtrarLista()">
+            </div>
+            
+            <div id="lista-empleados" class="grid-empleados">
+                </div>
+            </div>
+                    <div id="info-empleado" class="hidden">
+                        <div class="perfil">
+                            <img id="foto_empleado" src="https://via.placeholder.com/150" alt="Foto">
+                            <div class="datos">
+                                <p><strong>Nombre:</strong> <span id="nom_empleado">---</span></p>
+                                <p><strong>DNI:</strong> <span id="dni_empleado">---</span></p>
+                            </div>
+                        </div>
+                        <div class="controles-asistencia">
+                            <div class="campo">
+                                <label>Hora de Registro:</label>
+                                <input type="time" id="hora_registro">
+                            </div>
+                            <div class="opciones" id="opciones-entrada">
+                                <label><input type="radio" name="estado" value="Asistencia" checked> Asistencia</label>
+                                <label><input type="radio" name="estado" value="Tardanza"> Tardanza</label>
+                                <label><input type="radio" name="estado" value="Falta"> Falta</label>
+                            </div>
+                            <button id="btn-confirmar" class="btn-guardar" onclick="confirmarRegistro()">Confirmar Registro</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="seccion-gestion" class="hidden">
+                <h1>Registrar Nuevo Empleado</h1>
+                <div class="registro-card">
+                    <div class="campo"><input type="text" id="reg_dni" placeholder="DNI (8 dígitos)" maxlength="8"></div>
+                    <div class="campo"><input type="text" id="reg_nombre" placeholder="Nombre Completo"></div>
+                    <div class="campo"><label>Entrada:</label><input type="time" id="reg_entrada" value="08:00"></div>
+                    <div class="campo"><label>Salida:</label><input type="time" id="reg_salida" value="18:00"></div>
+                    <button class="btn-guardar" style="background: #2980b9;" onclick="guardarNuevoEmpleado()">Guardar Empleado</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

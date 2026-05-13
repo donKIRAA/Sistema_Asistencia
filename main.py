@@ -1,0 +1,175 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
+from datetime import date
+from database import engine, Base, SessionLocal
+import models
+import schemas
+
+# Inicialización del servidor
+app = FastAPI(title="API Control de Asistencia")
+
+# Montar la carpeta de archivos estáticos (Frontend)
+# Asegúrate de tener una carpeta llamada 'static' con tu index.html, style.css y app.js
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.on_event("startup")
+def startup_event():
+    # Crea las tablas si no existen
+    Base.metadata.create_all(bind=engine)
+    db: Session = SessionLocal()
+    try:
+        # Crear Admin por defecto si no existe
+        if not db.query(models.Admin).filter(models.Admin.username == "Admin").first():
+            db.add(models.Admin(username="Admin", password="admin_password"))
+            
+        # Crear Empleado de prueba si no existe
+        if not db.query(models.Empleado).filter(models.Empleado.dni == "12345678").first():
+            db.add(models.Empleado(
+                dni="12345678", 
+                nombre_completo="Practicante1",
+                activo=True
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+@app.get("/")
+def ruta_principal():
+    return {"mensaje": "Servidor funcionando. Accede a /static/index.html para la interfaz."}
+
+@app.post("/login")
+def login_admin(datos: schemas.AdminLogin):
+    db: Session = SessionLocal()
+    try:
+        admin = db.query(models.Admin).filter(
+            models.Admin.username == datos.username,
+            models.Admin.password == datos.password
+        ).first()
+        
+        if not admin:
+            raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+            
+        return {"mensaje": "Login exitoso"}
+    finally:
+        db.close()
+
+# --- CRUD DE EMPLEADOS ---
+
+@app.post("/empleados")
+def crear_empleado(datos: schemas.EmpleadoCreate):
+    db: Session = SessionLocal()
+    try:
+        existe = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
+        if existe:
+            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+        
+        nuevo = models.Empleado(
+            dni=datos.dni,
+            nombre_completo=datos.nombre_completo,
+            foto_perfil=datos.foto_perfil,
+            hora_entrada_turno=datos.hora_entrada_turno,
+            hora_salida_turno=datos.hora_salida_turno
+        )
+        db.add(nuevo)
+        db.commit()
+        return {"mensaje": "Empleado creado exitosamente"}
+    finally:
+        db.close()
+
+@app.get("/empleados")
+def obtener_empleados_activos():
+    db: Session = SessionLocal()
+    try:
+        # Solo devolvemos empleados que no han sido dados de baja (Soft Delete)
+        empleados = db.query(models.Empleado).filter(models.Empleado.activo == True).all()
+        return empleados
+    finally:
+        db.close()
+
+@app.delete("/empleados/{dni}")
+def dar_de_baja_empleado(dni: str):
+    db: Session = SessionLocal()
+    try:
+        empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+        if not empleado:
+            raise HTTPException(status_code=404, detail="Empleado no encontrado")
+        
+        empleado.activo = False  # Soft Delete: No eliminamos, solo desactivamos
+        db.commit()
+        return {"mensaje": f"Empleado {empleado.nombre_completo} dado de baja correctamente"}
+    finally:
+        db.close()
+
+# --- RUTAS DE ASISTENCIA (ENTRADA Y SALIDA) ---
+
+@app.post("/entrada")
+def registrar_entrada(datos: schemas.AsistenciaEntrada):
+    db: Session = SessionLocal()
+    try:
+        # 1. Buscar empleado
+        empleado = db.query(models.Empleado).filter(
+            models.Empleado.dni == datos.dni, 
+            models.Empleado.activo == True
+        ).first()
+        
+        if not empleado:
+            raise HTTPException(status_code=404, detail="Empleado no encontrado o inactivo")
+        
+        # 2. Verificar si ya marcó hoy
+        hoy = date.today()
+        asistencia_hoy = db.query(models.Asistencia).filter(
+            models.Asistencia.empleado_id == empleado.id,
+            models.Asistencia.fecha == hoy
+        ).first()
+
+        if asistencia_hoy:
+            raise HTTPException(status_code=400, detail="Ya se registró una entrada hoy para este DNI")
+
+        # 3. Guardar registro
+        nueva_asistencia = models.Asistencia(
+            empleado_id=empleado.id,
+            hora_entrada=datos.hora_llegada,
+            estado=datos.estado
+        )
+        db.add(nueva_asistencia)
+        db.commit()
+        
+        # Guardamos el nombre antes de cerrar la sesión para evitar el DetachedInstanceError
+        nombre = empleado.nombre_completo
+        return {"mensaje": f"Entrada registrada para {nombre}. Estado: {datos.estado}"}
+    finally:
+        db.close()
+
+@app.post("/salida")
+def registrar_salida(datos: schemas.AsistenciaSalida):
+    db: Session = SessionLocal()
+    try:
+        empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
+        if not empleado:
+            raise HTTPException(status_code=404, detail="Empleado no encontrado")
+            
+        hoy = date.today()
+        asistencia = db.query(models.Asistencia).filter(
+            models.Asistencia.empleado_id == empleado.id,
+            models.Asistencia.fecha == hoy
+        ).first()
+
+        if not asistencia:
+            raise HTTPException(status_code=400, detail="No existe un registro de entrada para hoy")
+            
+        if asistencia.hora_salida:
+            raise HTTPException(status_code=400, detail="Ya se registró la salida hoy")
+
+        asistencia.hora_salida = datos.hora_salida
+        db.commit()
+        
+        nombre = empleado.nombre_completo
+        return {"mensaje": f"Salida registrada exitosamente para {nombre}"}
+    finally:
+        db.close()
+
+from fastapi.staticfiles import StaticFiles
+
+# Esto le dice a FastAPI que busque los archivos web en la carpeta /static
+app.mount("/static", StaticFiles(directory="static"), name="static")
