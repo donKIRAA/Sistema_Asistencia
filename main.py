@@ -5,6 +5,7 @@ from datetime import date
 from database import engine, Base, SessionLocal
 import models
 import schemas
+import calculos
 
 # Inicialización del servidor
 app = FastAPI(title="API Control de Asistencia")
@@ -196,11 +197,28 @@ def registrar_salida(datos: schemas.AsistenciaSalida):
         if asistencia.hora_salida:
             raise HTTPException(status_code=400, detail="Ya se registró la salida hoy")
 
+        # 1. Guardamos la hora de salida real
         asistencia.hora_salida = datos.hora_salida
+        
+        # 2. LLAMAMOS AL MOTOR MATEMÁTICO
+        # Pasamos el turno del empleado y sus marcaciones reales
+        resultados = calculos.calcular_horas(
+            entrada_turno=empleado.hora_entrada_turno,
+            salida_turno=empleado.hora_salida_turno,
+            entrada_real=asistencia.hora_entrada,
+            salida_real=asistencia.hora_salida
+        )
+        
+        # 3. Actualizamos la base de datos con los resultados matemáticos
+        asistencia.horas_trabajadas = resultados["horas_trabajadas"]
+        asistencia.minutos_tardanza = resultados["minutos_tardanza"]
+        asistencia.minutos_extra = resultados["minutos_extra"]
+
+        # 4. Guardamos todo
         db.commit()
         
         nombre = empleado.nombre_completo
-        return {"mensaje": f"Salida registrada exitosamente para {nombre}"}
+        return {"mensaje": f"Salida y cálculos registrados exitosamente para {nombre}"}
     finally:
         db.close()
 

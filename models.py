@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Time, Date, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Time, Date, ForeignKey, Boolean, Float
 from sqlalchemy.orm import relationship
 from datetime import time, date
 from database import Base
@@ -27,5 +27,10 @@ class Asistencia(Base):
     hora_entrada = Column(Time, nullable=True) 
     hora_salida = Column(Time, nullable=True)  
     estado = Column(String) 
+    
+    # --- NUEVOS CAMPOS PARA EL CÁLCULO ---
+    horas_trabajadas = Column(Float, default=0.0)
+    minutos_tardanza = Column(Float, default=0.0)
+    minutos_extra = Column(Float, default=0.0) # Preparando el terreno para el Paso 6
     
     empleado = relationship("Empleado")

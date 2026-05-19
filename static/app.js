@@ -1,12 +1,53 @@
 // --- VARIABLES GLOBALES ---
 let modoActual = 'entrada';
+let listaGlobalEmpleados = []; 
+
+// --- SISTEMAS DE NOTIFICACIÓN Y MODALES ---
+function mostrarNotificacion(mensaje, tipo = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast ${tipo}`;
+    toast.innerHTML = `
+        <span>${mensaje}</span>
+        <span style="cursor:pointer; font-weight:bold; margin-left:15px; font-size:18px;" onclick="this.parentElement.remove()">×</span>
+    `;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('fadeOut');
+        setTimeout(() => toast.remove(), 300);
+    }, 3500);
+}
+
+function mostrarConfirmacion(mensaje, callbackAceptar) {
+    const modal = document.getElementById('modal-confirmacion');
+    document.getElementById('modal-mensaje').innerText = mensaje;
+    
+    modal.classList.remove('hidden');
+
+    const btnAceptar = document.getElementById('btn-modal-aceptar');
+    const btnCancelar = document.getElementById('btn-modal-cancelar');
+
+    const nuevoBtnAceptar = btnAceptar.cloneNode(true);
+    const nuevoBtnCancelar = btnCancelar.cloneNode(true);
+    btnAceptar.parentNode.replaceChild(nuevoBtnAceptar, btnAceptar);
+    btnCancelar.parentNode.replaceChild(nuevoBtnCancelar, btnCancelar);
+
+    nuevoBtnCancelar.addEventListener('click', () => {
+        modal.classList.add('hidden');
+    });
+
+    nuevoBtnAceptar.addEventListener('click', () => {
+        modal.classList.add('hidden');
+        callbackAceptar();
+    });
+}
 
 // --- AUTENTICACIÓN ---
 async function iniciarSesion() {
     const user = document.getElementById('login_user').value;
     const pass = document.getElementById('login_pass').value;
 
-    if (!user || !pass) return alert("Ingrese sus credenciales");
+    if (!user || !pass) return mostrarNotificacion("Ingrese sus credenciales", "error");
 
     try {
         const response = await fetch('/login', {
@@ -21,26 +62,24 @@ async function iniciarSesion() {
             cargarListaEmpleados();
         } else {
             const err = await response.json();
-            alert(err.detail);
+            mostrarNotificacion(err.detail, "error");
         }
     } catch (error) {
-        alert("Error de conexión con el servidor");
+        mostrarNotificacion("Error de conexión con el servidor", "error");
     }
 }
 
 function cerrarSesion() {
-    // Ventana emergente de confirmación
-    const confirmar = confirm("¿Estás seguro de que deseas cerrar sesión?");
-    
-    if (confirmar) {
+    mostrarConfirmacion("¿Estás seguro de que deseas cerrar sesión?", () => {
         document.getElementById('login_user').value = '';
         document.getElementById('login_pass').value = '';
         document.getElementById('dashboard').style.display = 'none';
         document.getElementById('pantalla-login').style.display = 'flex';
         
-        document.getElementById('dni_busqueda').value = '';
-        document.getElementById('info-empleado').classList.add('hidden');
-    }
+        document.getElementById('busqueda_rapida').value = '';
+        document.getElementById('seccion-asistencia').classList.remove('hidden');
+        document.getElementById('seccion-gestion').classList.add('hidden');
+    });
 }
 
 // --- NAVEGACIÓN ---
@@ -52,7 +91,7 @@ function mostrarPantalla(modo) {
     if (modo === 'gestion') {
         asistencia.classList.add('hidden');
         gestion.classList.remove('hidden');
-        cargarTablaGestion(); // <--- Llamamos a la tabla
+        cargarTablaGestion(); 
     } else {
         gestion.classList.add('hidden');
         asistencia.classList.remove('hidden');
@@ -63,33 +102,25 @@ function mostrarPantalla(modo) {
 }
 
 // --- ASISTENCIA ---
-let listaGlobalEmpleados = []; // Guarda la lista para la barra de búsqueda
-
-// 1. Descarga los empleados y los ordena
 async function cargarListaEmpleados() {
     try {
         const response = await fetch('/empleados');
         let empleados = await response.json();
-
-        // Ordenar alfabéticamente por nombre completo
         empleados.sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
         listaGlobalEmpleados = empleados;
-
         renderizarLista(empleados);
     } catch (error) {
         console.error("Error al cargar lista:", error);
     }
 }
 
-// 2. Dibuja las tarjetas en pantalla
 function renderizarLista(empleados) {
     const contenedor = document.getElementById('lista-empleados');
     contenedor.innerHTML = '';
-    const ahora = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    const horaPorDefecto = modoActual === 'entrada' ? '08:00' : '17:00';
 
     empleados.forEach(emp => {
         const foto = emp.foto_perfil || 'https://via.placeholder.com/70x70.png?text=Foto';
-
         const selectEstado = modoActual === 'entrada' ? `
             <select id="estado_${emp.dni}">
                 <option value="Asistencia">Asistencia</option>
@@ -97,11 +128,9 @@ function renderizarLista(empleados) {
                 <option value="Falta">Falta</option>
             </select>
         ` : '';
-
         const claseBoton = modoActual === 'entrada' ? 'btn-marcar' : 'btn-marcar salida';
         const textoBoton = modoActual === 'entrada' ? 'Marcar' : 'Salir';
 
-        // Estructura HTML idéntica a tu boceto
         const tarjeta = `
             <div class="tarjeta-empleado">
                 <div class="perfil-info">
@@ -111,11 +140,10 @@ function renderizarLista(empleados) {
                         <p>DNI: ${emp.dni}</p>
                     </div>
                 </div>
-                
                 <div class="controles-tarjeta">
                     ${selectEstado}
                     <div class="acciones-rapidas">
-                        <input type="time" id="hora_${emp.dni}" value="${ahora}">
+                        <input type="time" id="hora_${emp.dni}" value="${horaPorDefecto}">
                         <button class="${claseBoton}" onclick="enviarRegistroLista('${emp.dni}')">${textoBoton}</button>
                     </div>
                 </div>
@@ -125,7 +153,6 @@ function renderizarLista(empleados) {
     });
 }
 
-// 3. Barra de búsqueda en tiempo real
 function filtrarLista() {
     const texto = document.getElementById('busqueda_rapida').value.toLowerCase();
     const filtrados = listaGlobalEmpleados.filter(emp =>
@@ -135,11 +162,9 @@ function filtrarLista() {
     renderizarLista(filtrados);
 }
 
-// 4. Envía la marcación al servidor
 async function enviarRegistroLista(dni) {
     const hora = document.getElementById(`hora_${dni}`).value;
     const endpoint = (modoActual === 'entrada') ? '/entrada' : '/salida';
-
     let cuerpo = { dni: dni };
     if (modoActual === 'entrada') {
         cuerpo.hora_llegada = `${hora}:00`;
@@ -154,11 +179,15 @@ async function enviarRegistroLista(dni) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(cuerpo)
         });
-
         const res = await response.json();
-        alert(response.ok ? res.mensaje : res.detail);
+        if (response.ok) {
+            const mensajeExito = (modoActual === 'entrada') ? "Marcación de entrada exitosa" : "Marcación de salida exitosa";
+            mostrarNotificacion(mensajeExito, 'success');
+        } else {
+            mostrarNotificacion(res.detail, 'error');
+        }
     } catch (error) {
-        alert("Error de conexión al registrar.");
+        mostrarNotificacion("Error de conexión al registrar.", "error");
     }
 }
 
@@ -169,8 +198,8 @@ async function guardarNuevoEmpleado() {
     const entrada = document.getElementById('reg_entrada').value;
     const salida = document.getElementById('reg_salida').value;
 
-    if (!dni || !nombre) return alert("Completa DNI y Nombre obligatoriamente.");
-    if (dni.length !== 8) return alert("El DNI debe tener exactamente 8 dígitos.");
+    if (!dni || !nombre) return mostrarNotificacion("Completa DNI y Nombre obligatoriamente.", "error");
+    if (dni.length !== 8) return mostrarNotificacion("El DNI debe tener exactamente 8 dígitos.", "error");
 
     try {
         const response = await fetch('/empleados', {
@@ -183,45 +212,33 @@ async function guardarNuevoEmpleado() {
                 hora_salida_turno: `${salida}:00`
             })
         });
-
         const res = await response.json();
         if (response.ok) {
-            alert("Empleado guardado correctamente.");
-            
-            // Limpiamos los campos del formulario
+            mostrarNotificacion("Empleado guardado correctamente.", "success");
             document.getElementById('reg_dni').value = '';
             document.getElementById('reg_nombre').value = '';
             document.getElementById('reg_entrada').value = '08:00';
             document.getElementById('reg_salida').value = '18:00';
-            
-            // ¡MAGIA!: Refrescamos la tabla de la izquierda automáticamente
             cargarTablaGestion();
-            
         } else {
-            alert("Error: " + res.detail);
+            mostrarNotificacion("Error: " + res.detail, "error");
         }
     } catch (error) {
-        alert("Error de conexión al guardar el empleado.");
+        mostrarNotificacion("Error de conexión al guardar el empleado.", "error");
     }
 }
-
-// --- FUNCIONES DE LA TABLA DE GESTIÓN ---
 
 async function cargarTablaGestion() {
     try {
         const response = await fetch('/empleados');
         let empleados = await response.json();
-        
-        // Orden alfabético
         empleados.sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
-        
         const tbody = document.getElementById('tabla-empleados-body');
         tbody.innerHTML = '';
         
         empleados.forEach(emp => {
             const entradaStr = emp.hora_entrada_turno.substring(0, 5);
             const salidaStr = emp.hora_salida_turno.substring(0, 5);
-            
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><strong>${emp.dni}</strong></td>
@@ -240,36 +257,27 @@ async function cargarTablaGestion() {
 }
 
 function prepararEdicion(dni, nombre, entrada, salida) {
-    // Cambiamos los textos y valores del formulario
     document.getElementById('form-titulo').innerText = 'Editar Empleado';
-    
     const inputDni = document.getElementById('reg_dni');
     inputDni.value = dni;
-    inputDni.disabled = true; // El DNI no se debe modificar
+    inputDni.disabled = true; 
     inputDni.style.backgroundColor = "#eee";
-    
     document.getElementById('reg_nombre').value = nombre;
     document.getElementById('reg_entrada').value = entrada;
     document.getElementById('reg_salida').value = salida;
-    
-    // Cambiamos los botones visibles
     document.getElementById('btn-guardar-nuevo').classList.add('hidden');
     document.getElementById('controles-edicion').classList.remove('hidden');
 }
 
 function cancelarEdicion() {
-    // Restauramos el formulario a su estado original
     document.getElementById('form-titulo').innerText = 'Registrar Nuevo Empleado';
-    
     const inputDni = document.getElementById('reg_dni');
     inputDni.value = '';
     inputDni.disabled = false;
     inputDni.style.backgroundColor = "white";
-    
     document.getElementById('reg_nombre').value = '';
     document.getElementById('reg_entrada').value = '08:00';
     document.getElementById('reg_salida').value = '18:00';
-    
     document.getElementById('btn-guardar-nuevo').classList.remove('hidden');
     document.getElementById('controles-edicion').classList.add('hidden');
 }
@@ -280,7 +288,7 @@ async function enviarEdicion() {
     const entrada = document.getElementById('reg_entrada').value;
     const salida = document.getElementById('reg_salida').value;
 
-    if (!nombre) return alert("El nombre no puede estar vacío.");
+    if (!nombre) return mostrarNotificacion("El nombre no puede estar vacío.", "error");
 
     try {
         const response = await fetch(`/empleados/${dni}`, {
@@ -294,38 +302,36 @@ async function enviarEdicion() {
         });
 
         if (response.ok) {
-            alert("Datos actualizados correctamente.");
+            mostrarNotificacion("Datos actualizados correctamente.", "success");
             cancelarEdicion();
-            cargarTablaGestion(); // Refrescamos la tabla para ver el cambio
+            cargarTablaGestion(); 
         } else {
             const res = await response.json();
-            alert("Error: " + res.detail);
+            mostrarNotificacion("Error: " + res.detail, "error");
         }
     } catch (error) {
-        alert("Error de conexión al actualizar.");
+        mostrarNotificacion("Error de conexión al actualizar.", "error");
     }
 }
 
-async function darDeBaja(dni) {
-    const confirmar = confirm(`¿Estás seguro de que deseas dar de baja al empleado con DNI ${dni}?\nEsta acción lo ocultará del registro de asistencia.`);
-    
-    if (!confirmar) return;
-
-    try {
-        const response = await fetch(`/empleados/${dni}`, {
-            method: 'DELETE'
-        });
-
-        if (response.ok) {
-            alert("El empleado ha sido dado de baja.");
-            cargarTablaGestion(); // Refrescamos la tabla y el empleado desaparecerá
-        } else {
-            const res = await response.json();
-            alert("Error: " + res.detail);
+function darDeBaja(dni) {
+    const mensaje = `¿Estás seguro de que deseas dar de baja al empleado con DNI ${dni}?\nEsta acción lo ocultará del registro de asistencia.`;
+    mostrarConfirmacion(mensaje, async () => {
+        try {
+            const response = await fetch(`/empleados/${dni}`, {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                mostrarNotificacion("El empleado ha sido dado de baja.", "success");
+                cargarTablaGestion(); 
+            } else {
+                const res = await response.json();
+                mostrarNotificacion("Error: " + res.detail, "error");
+            }
+        } catch (error) {
+            mostrarNotificacion("Error de conexión al dar de baja.", "error");
         }
-    } catch (error) {
-        alert("Error de conexión al dar de baja.");
-    }
+    });
 }
 
 // --- VISTA DE EMPLEADOS INACTIVOS ---
@@ -335,36 +341,28 @@ function toggleVistaInactivos() {
     viendoActivos = !viendoActivos;
     const titulo = document.getElementById('titulo-tabla-gestion');
     const btn = document.getElementById('btn-toggle-activos');
-    const cabeceraTabla = document.querySelector('#tabla-empleados-head tr'); // Seleccionamos la fila de los títulos
+    const cabeceraTabla = document.querySelector('#tabla-empleados-head tr'); 
 
     if (viendoActivos) {
-        // --- MODO: ACTIVOS ---
         titulo.innerText = 'Empleados Activos';
         btn.innerText = 'Ver Historial de Bajas';
         btn.style.background = '#7f8c8d';
-        
-        // Restauramos las 4 columnas originales
         cabeceraTabla.innerHTML = `
             <th>DNI</th>
             <th>Nombre Completo</th>
             <th>Horario (Ent/Sal)</th>
             <th>Acciones</th>
         `;
-        
         cargarTablaGestion(); 
     } else {
-        // --- MODO: INACTIVOS ---
         titulo.innerText = 'Personal Dado de Baja';
         btn.innerText = 'Volver a Activos';
         btn.style.background = '#27ae60';
-        
-        // Cambiamos a solo 3 columnas con el título "Estado"
         cabeceraTabla.innerHTML = `
             <th>DNI</th>
             <th>Nombre Completo</th>
             <th>Estado</th>
         `;
-        
         cargarTablaInactivos(); 
     }
 }
@@ -373,17 +371,13 @@ async function cargarTablaInactivos() {
     try {
         const response = await fetch('/empleados/inactivos');
         let empleados = await response.json();
-        
         empleados.sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
-        
         const tbody = document.getElementById('tabla-empleados-body');
         tbody.innerHTML = '';
         
         empleados.forEach(emp => {
             const tr = document.createElement('tr');
             tr.style.backgroundColor = "#fdf2f2"; 
-            
-            // Inyectamos solo 3 celdas (<td>), quitando completamente la columna de acciones
             tr.innerHTML = `
                 <td><strong>${emp.dni}</strong></td>
                 <td style="color: #7f8c8d; text-decoration: line-through;">${emp.nombre_completo}</td>
@@ -393,31 +387,5 @@ async function cargarTablaInactivos() {
         });
     } catch (error) {
         console.error("Error al cargar tabla de inactivos:", error);
-    }
-}
-
-async function reactivarEmpleado(dni) {
-    const confirmar = confirm(`¿Deseas reactivar al empleado con DNI ${dni} y devolverlo al registro de asistencia?`);
-    
-    if (!confirmar) return;
-
-    try {
-        const response = await fetch(`/empleados/${dni}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                activo: true // Mandamos la orden de volverlo a la vida
-            })
-        });
-
-        if (response.ok) {
-            alert("El empleado ha sido reactivado exitosamente.");
-            cargarTablaInactivos(); // Refrescamos la lista de bajas (desaparecerá de aquí)
-        } else {
-            const res = await response.json();
-            alert("Error: " + res.detail);
-        }
-    } catch (error) {
-        alert("Error de conexión al reactivar.");
     }
 }

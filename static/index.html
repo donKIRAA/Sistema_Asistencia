@@ -48,9 +48,9 @@
                     
                     <div class="lista-gestion">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-    <h3 id="titulo-tabla-gestion" style="margin: 0; color: #2c3e50;">Empleados Activos</h3>
-    <button id="btn-toggle-activos" class="btn-accion" style="background: #7f8c8d;" onclick="toggleVistaInactivos()">Ver Historial de Bajas</button>
-</div>
+                            <h3 id="titulo-tabla-gestion" style="margin: 0; color: #2c3e50;">Empleados Activos</h3>
+                            <button id="btn-toggle-activos" class="btn-accion" style="background: #7f8c8d;" onclick="toggleVistaInactivos()">Ver Historial de Bajas</button>
+                        </div>
                         <div style="overflow-x: auto;">
                             <table class="tabla-empleados">
                                 <thead id="tabla-empleados-head">
@@ -83,6 +83,19 @@
                     </div>
 
                 </div>
-            </div> </div> </div> <script src="app.js"></script>
+            </div> </div> </div> <div id="toast-container"></div>
+
+    <div id="modal-confirmacion" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 style="margin-top: 0; color: #2c3e50;">Confirmar Acción</h3>
+            <p id="modal-mensaje">¿Estás seguro?</p>
+            <div class="modal-botones">
+                <button id="btn-modal-cancelar" class="btn-modal btn-cancelar">Cancelar</button>
+                <button id="btn-modal-aceptar" class="btn-modal btn-aceptar">Aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
 </body>
 </html>
