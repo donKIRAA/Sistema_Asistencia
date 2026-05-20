@@ -17,7 +17,9 @@ class Empleado(Base):
     foto_perfil = Column(String, nullable=True) 
     hora_entrada_turno = Column(Time, default=time(8, 0)) 
     hora_salida_turno = Column(Time, default=time(18, 0)) 
-    activo = Column(Boolean, default=True) # <--- NUEVO CAMPO: True (Trabajando), False (Dado de baja)
+    activo = Column(Boolean, default=True) 
+    # --- NUEVO CAMPO ---
+    motivo_baja = Column(String, nullable=True)
 
 class Asistencia(Base):
     __tablename__ = "asistencias"

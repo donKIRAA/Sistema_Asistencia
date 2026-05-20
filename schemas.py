@@ -36,3 +36,7 @@ class EmpleadoUpdate(BaseModel):
     hora_entrada_turno: Optional[time] = None
     hora_salida_turno: Optional[time] = None
     activo: Optional[bool] = None # <--- AÑADIMOS ESTO
+
+# Añadir al final de schemas.py
+class EmpleadoBaja(BaseModel):
+    motivo: str

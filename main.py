@@ -88,17 +88,29 @@ def obtener_empleados_activos():
     finally:
         db.close()
 
-@app.delete("/empleados/{dni}")
-def dar_de_baja_empleado(dni: str):
+# --- REEMPLAZA TU ANTIGUA RUTA DE BAJA POR ESTA ---
+@app.put("/empleados/{dni}/baja")
+def dar_de_baja_empleado(dni: str, datos: schemas.EmpleadoBaja):
     db: Session = SessionLocal()
     try:
         empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
         if not empleado:
             raise HTTPException(status_code=404, detail="Empleado no encontrado")
         
-        empleado.activo = False  # Soft Delete: No eliminamos, solo desactivamos
+        empleado.activo = False  
+        empleado.motivo_baja = datos.motivo # Guardamos la justificación
         db.commit()
         return {"mensaje": f"Empleado {empleado.nombre_completo} dado de baja correctamente"}
+    finally:
+        db.close()
+        
+@app.get("/empleados/todos")
+def obtener_todos_empleados():
+    db: Session = SessionLocal()
+    try:
+        # Devuelve tanto activos como inactivos
+        empleados = db.query(models.Empleado).all()
+        return empleados
     finally:
         db.close()
 

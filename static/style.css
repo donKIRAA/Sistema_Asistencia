@@ -118,13 +118,6 @@ input[type="time"], input[type="text"] { padding: 8px; border-radius: 4px; borde
     border-radius: 4px;
 }
 
-/* --- DISEÑO DE GESTIÓN DE PERSONAL (2 COLUMNAS) --- */
-.gestion-container {
-    display: flex;
-    gap: 30px;
-    align-items: flex-start;
-}
-
 .lista-gestion {
     flex: 2; /* Toma el doble de espacio que el formulario */
     background: white;
@@ -239,3 +232,96 @@ input[type="time"], input[type="text"] { padding: 8px; border-radius: 4px; borde
 .btn-cancelar:hover { background: #7f8c8d; }
 .btn-aceptar { background: #c0392b; }
 .btn-aceptar:hover { background: #e74c3c; }
+
+/* --- NUEVA BARRA DE HERRAMIENTAS GESTIÓN --- */
+.gestion-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    background: white;
+    padding: 15px 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.tabs-gestion {
+    display: flex;
+    gap: 10px;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    padding: 10px 15px;
+    font-size: 15px;
+    font-weight: bold;
+    color: #7f8c8d;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: 0.2s;
+}
+
+.tab-btn.active {
+    color: #2c3e50;
+    border-bottom: 3px solid #16a085;
+}
+
+.tab-btn:hover:not(.active) {
+    color: #34495e;
+}
+
+.controles-derecha {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.search-box {
+    display: flex;
+    align-items: center;
+    background: #f4f7f6;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    padding: 5px 15px;
+}
+
+.search-box input {
+    border: none;
+    background: transparent;
+    outline: none;
+    padding: 5px;
+    width: 200px;
+}
+
+.btn-add-empleado {
+    background: #2980b9;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: 0.2s;
+}
+
+.btn-add-empleado:hover {
+    background: #2471a3;
+}
+
+.btn-historial {
+    background: #ecf0f1;
+    border: 1px solid #bdc3c7;
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: 0.2s;
+}
+
+.btn-historial:hover {
+    background: #bdc3c7;
+}
