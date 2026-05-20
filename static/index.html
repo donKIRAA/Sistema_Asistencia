@@ -27,6 +27,9 @@
             <button onclick="mostrarPantalla('entrada')">Registro de Entrada</button>
             <button onclick="mostrarPantalla('salida')">Registro de Salida</button>
             <button onclick="mostrarPantalla('gestion')" style="background: #16a085; margin-top: 30px;">Gestión de Personal</button>
+            
+            <button onclick="mostrarPantalla('monitor')" style="background: #e67e22; margin-top: 10px;">Monitor de Asistencias</button>
+            
             <button id="btn-logout" onclick="cerrarSesion()">Cerrar Sesión</button>
         </div>
 
@@ -75,6 +78,62 @@
                                 </tr>
                             </thead>
                             <tbody id="tabla-empleados-body">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div> <div id="seccion-monitor" class="hidden">
+                <h1 style="margin-top: 0; color: #2c3e50;">Monitor de Asistencias</h1>
+                
+                <div class="kpi-container">
+                    <div class="kpi-card">
+                        <h3>Asistencias Hoy</h3>
+                        <div class="kpi-value" id="kpi-asistencias">0</div>
+                    </div>
+                    <div class="kpi-card" style="border-left-color: #f39c12;">
+                        <h3>Tardanzas Hoy</h3>
+                        <div class="kpi-value" id="kpi-tardanzas" style="color: #f39c12;">0</div>
+                    </div>
+                    <div class="kpi-card" style="border-left-color: #c0392b;">
+                        <h3>Faltas Hoy</h3>
+                        <div class="kpi-value" id="kpi-faltas" style="color: #c0392b;">0</div>
+                    </div>
+                    <div class="kpi-card" style="border-left-color: #2980b9;">
+                        <h3>Hrs Extra (Total)</h3>
+                        <div class="kpi-value" id="kpi-extras" style="color: #2980b9;">0h</div>
+                    </div>
+                </div>
+
+                <div class="gestion-toolbar" style="margin-top: 20px;">
+                    <div class="controles-derecha" style="width: 100%; justify-content: space-between;">
+                        <div style="display: flex; gap: 15px; align-items: center;">
+                            <label style="font-weight: bold; color: #2c3e50;">Filtrar por Fecha:</label>
+                            <input type="date" id="filtro-fecha-monitor" class="filtro-date" onchange="cargarTablaMonitor()">
+                            <button class="btn-accion" style="background: #7f8c8d;" onclick="limpiarFiltroMonitor()">Ver Todo</button>
+                        </div>
+                        <div class="search-box">
+                            <span>🔍</span>
+                            <input type="text" id="busqueda_monitor" placeholder="Buscar empleado..." onkeyup="filtrarTablaMonitor()">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lista-gestion" style="width: 100%; box-sizing: border-box;">
+                    <div style="overflow-x: auto;">
+                        <table class="tabla-empleados">
+                            <thead id="tabla-monitor-head">
+                                <tr>
+                                    <th>DNI</th>
+                                    <th>Empleado</th>
+                                    <th>Fecha</th>
+                                    <th style="text-align: center;">Entrada</th>
+                                    <th style="text-align: center;">Salida</th>
+                                    <th style="text-align: center;">Tardanza</th>
+                                    <th style="text-align: center;">Hrs Extra</th>
+                                    <th style="text-align: center;">Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-monitor-body">
                                 </tbody>
                         </table>
                     </div>

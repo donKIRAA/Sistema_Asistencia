@@ -114,7 +114,46 @@ def obtener_todos_empleados():
     finally:
         db.close()
 
-# 1. Busca tu @app.put("/empleados/{dni}") y agrégale esta validación:
+
+@app.get("/asistencias/monitor")
+def obtener_monitor_asistencias():
+    db: Session = SessionLocal()
+    try:
+        # Obtenemos todas las asistencias ordenadas por la más reciente primero
+        asistencias = db.query(models.Asistencia).order_by(models.Asistencia.fecha.desc(), models.Asistencia.id.desc()).all()
+        
+        resultado = []
+        for asis in asistencias:
+            emp = asis.empleado # Gracias a la relación en SQLAlchemy, traemos al empleado al instante
+            
+            if not emp:
+                continue # Por si hay algún registro huérfano por error
+            
+            # Formateamos las horas a texto "HH:MM", si están vacías ponemos "--:--"
+            entrada_str = asis.hora_entrada.strftime("%H:%M") if asis.hora_entrada else "--:--"
+            salida_str = asis.hora_salida.strftime("%H:%M") if asis.hora_salida else "--:--"
+            
+            # Formateamos los minutos extra para que se lean como "1h 30m" en lugar de "90"
+            m_extra = asis.minutos_extra or 0
+            h_ext = int(m_extra // 60)
+            m_ext = int(m_extra % 60)
+            str_extra = f"{h_ext}h {m_ext}m" if m_extra > 0 else "0h"
+            
+            resultado.append({
+                "dni": emp.dni,
+                "nombre_completo": emp.nombre_completo,
+                "fecha": asis.fecha.strftime("%Y-%m-%d"),
+                "hora_entrada": entrada_str,
+                "hora_salida": salida_str,
+                "minutos_tardanza": int(asis.minutos_tardanza or 0),
+                "horas_extra": str_extra,
+                "estado": asis.estado
+            })
+            
+        return resultado
+    finally:
+        db.close()
+
 @app.put("/empleados/{dni}")
 def actualizar_empleado(dni: str, datos: schemas.EmpleadoUpdate):
     db: Session = SessionLocal()
