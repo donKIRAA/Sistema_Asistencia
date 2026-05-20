@@ -1,279 +1,176 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from datetime import date
-from database import engine, Base, SessionLocal
-import models
-import schemas
-import calculos
+from datetime import datetime, date
+import models, schemas
+from database import engine, SessionLocal
 
-# Inicialización del servidor
-app = FastAPI(title="API Control de Asistencia")
+models.Base.metadata.create_all(bind=engine)
 
-# Montar la carpeta de archivos estáticos (Frontend)
-# Asegúrate de tener una carpeta llamada 'static' con tu index.html, style.css y app.js
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app = FastAPI(title="SIA - Backend de Asistencia")
 
-@app.on_event("startup")
-def startup_event():
-    # Crea las tablas si no existen
-    Base.metadata.create_all(bind=engine)
-    db: Session = SessionLocal()
+def get_db():
+    db = SessionLocal()
     try:
-        # Crear Admin por defecto si no existe
-        if not db.query(models.Admin).filter(models.Admin.username == "Admin").first():
-            db.add(models.Admin(username="Admin", password="admin_password"))
-            
-        # Crear Empleado de prueba si no existe
-        if not db.query(models.Empleado).filter(models.Empleado.dni == "12345678").first():
-            db.add(models.Empleado(
-                dni="12345678", 
-                nombre_completo="Practicante1",
-                activo=True
-            ))
-        db.commit()
+        yield db
     finally:
         db.close()
-
-@app.get("/")
-def ruta_principal():
-    return {"mensaje": "Servidor funcionando. Accede a /static/index.html para la interfaz."}
 
 @app.post("/login")
-def login_admin(datos: schemas.AdminLogin):
-    db: Session = SessionLocal()
-    try:
-        admin = db.query(models.Admin).filter(
-            models.Admin.username == datos.username,
-            models.Admin.password == datos.password
-        ).first()
-        
-        if not admin:
-            raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
-            
+def login(data: schemas.LoginData):
+    if data.username == "admin" and data.password == "admin123":
         return {"mensaje": "Login exitoso"}
-    finally:
-        db.close()
-
-# --- CRUD DE EMPLEADOS ---
-
-@app.post("/empleados")
-def crear_empleado(datos: schemas.EmpleadoCreate):
-    db: Session = SessionLocal()
-    try:
-        existe = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
-        if existe:
-            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
-        
-        nuevo = models.Empleado(
-            dni=datos.dni,
-            nombre_completo=datos.nombre_completo,
-            foto_perfil=datos.foto_perfil,
-            hora_entrada_turno=datos.hora_entrada_turno,
-            hora_salida_turno=datos.hora_salida_turno
-        )
-        db.add(nuevo)
-        db.commit()
-        return {"mensaje": "Empleado creado exitosamente"}
-    finally:
-        db.close()
+    raise HTTPException(status_code=401, detail="Credenciales incorrectas")
 
 @app.get("/empleados")
-def obtener_empleados_activos():
-    db: Session = SessionLocal()
-    try:
-        # Solo devolvemos empleados que no han sido dados de baja (Soft Delete)
-        empleados = db.query(models.Empleado).filter(models.Empleado.activo == True).all()
-        return empleados
-    finally:
-        db.close()
+def obtener_empleados_activos(db: Session = Depends(get_db)):
+    return db.query(models.Empleado).filter(models.Empleado.activo == True).all()
 
-# --- REEMPLAZA TU ANTIGUA RUTA DE BAJA POR ESTA ---
-@app.put("/empleados/{dni}/baja")
-def dar_de_baja_empleado(dni: str, datos: schemas.EmpleadoBaja):
-    db: Session = SessionLocal()
-    try:
-        empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
-        if not empleado:
-            raise HTTPException(status_code=404, detail="Empleado no encontrado")
-        
-        empleado.activo = False  
-        empleado.motivo_baja = datos.motivo # Guardamos la justificación
-        db.commit()
-        return {"mensaje": f"Empleado {empleado.nombre_completo} dado de baja correctamente"}
-    finally:
-        db.close()
-        
 @app.get("/empleados/todos")
-def obtener_todos_empleados():
-    db: Session = SessionLocal()
-    try:
-        # Devuelve tanto activos como inactivos
-        empleados = db.query(models.Empleado).all()
-        return empleados
-    finally:
-        db.close()
+def obtener_todos_empleados(db: Session = Depends(get_db)):
+    return db.query(models.Empleado).all()
 
-
-@app.get("/asistencias/monitor")
-def obtener_monitor_asistencias():
-    db: Session = SessionLocal()
-    try:
-        # Obtenemos todas las asistencias ordenadas por la más reciente primero
-        asistencias = db.query(models.Asistencia).order_by(models.Asistencia.fecha.desc(), models.Asistencia.id.desc()).all()
-        
-        resultado = []
-        for asis in asistencias:
-            emp = asis.empleado # Gracias a la relación en SQLAlchemy, traemos al empleado al instante
-            
-            if not emp:
-                continue # Por si hay algún registro huérfano por error
-            
-            # Formateamos las horas a texto "HH:MM", si están vacías ponemos "--:--"
-            entrada_str = asis.hora_entrada.strftime("%H:%M") if asis.hora_entrada else "--:--"
-            salida_str = asis.hora_salida.strftime("%H:%M") if asis.hora_salida else "--:--"
-            
-            # Formateamos los minutos extra para que se lean como "1h 30m" en lugar de "90"
-            m_extra = asis.minutos_extra or 0
-            h_ext = int(m_extra // 60)
-            m_ext = int(m_extra % 60)
-            str_extra = f"{h_ext}h {m_ext}m" if m_extra > 0 else "0h"
-            
-            resultado.append({
-                "dni": emp.dni,
-                "nombre_completo": emp.nombre_completo,
-                "fecha": asis.fecha.strftime("%Y-%m-%d"),
-                "hora_entrada": entrada_str,
-                "hora_salida": salida_str,
-                "minutos_tardanza": int(asis.minutos_tardanza or 0),
-                "horas_extra": str_extra,
-                "estado": asis.estado
-            })
-            
-        return resultado
-    finally:
-        db.close()
+@app.post("/empleados")
+def crear_empleado(datos: schemas.EmpleadoCreate, db: Session = Depends(get_db)):
+    if db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first():
+        raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+    
+    nuevo_empleado = models.Empleado(
+        dni=datos.dni,
+        nombres=datos.nombres,
+        apellido_paterno=datos.apellido_paterno,
+        apellido_materno=datos.apellido_materno,
+        correo=datos.correo,
+        celular=datos.celular,
+        contacto_emergencia=datos.contacto_emergencia,
+        hora_entrada_turno=datetime.strptime(datos.hora_entrada_turno, "%H:%M:%S").time(),
+        hora_salida_turno=datetime.strptime(datos.hora_salida_turno, "%H:%M:%S").time(),
+        foto_perfil=datos.foto_perfil
+    )
+    db.add(nuevo_empleado)
+    db.commit()
+    return {"mensaje": "Empleado guardado correctamente"}
 
 @app.put("/empleados/{dni}")
-def actualizar_empleado(dni: str, datos: schemas.EmpleadoUpdate):
-    db: Session = SessionLocal()
-    try:
-        empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
-        if not empleado:
-            raise HTTPException(status_code=404, detail="Empleado no encontrado")
+def editar_empleado(dni: str, datos: schemas.EmpleadoUpdate, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    
+    empleado.nombres = datos.nombres
+    empleado.apellido_paterno = datos.apellido_paterno
+    empleado.apellido_materno = datos.apellido_materno
+    empleado.correo = datos.correo
+    empleado.celular = datos.celular
+    empleado.contacto_emergencia = datos.contacto_emergencia
+    empleado.hora_entrada_turno = datetime.strptime(datos.hora_entrada_turno, "%H:%M:%S").time()
+    empleado.hora_salida_turno = datetime.strptime(datos.hora_salida_turno, "%H:%M:%S").time()
+    
+    if datos.foto_perfil:
+        empleado.foto_perfil = datos.foto_perfil
         
-        if datos.nombre_completo is not None:
-            empleado.nombre_completo = datos.nombre_completo
-        if datos.hora_entrada_turno is not None:
-            empleado.hora_entrada_turno = datos.hora_entrada_turno
-        if datos.hora_salida_turno is not None:
-            empleado.hora_salida_turno = datos.hora_salida_turno
-        # --- AÑADE ESTAS DOS LÍNEAS ---
-        if datos.activo is not None:
-            empleado.activo = datos.activo
-            
-        db.commit()
-        return {"mensaje": "Empleado actualizado correctamente"}
-    finally:
-        db.close()
+    db.commit()
+    return {"mensaje": "Empleado actualizado exitosamente"}
 
-# 2. Añade esta NUEVA ruta justo debajo:
-@app.get("/empleados/inactivos")
-def obtener_empleados_inactivos():
-    db: Session = SessionLocal()
-    try:
-        # Traemos solo los que tienen activo == False
-        empleados = db.query(models.Empleado).filter(models.Empleado.activo == False).all()
-        return empleados
-    finally:
-        db.close()
-
-# --- RUTAS DE ASISTENCIA (ENTRADA Y SALIDA) ---
+@app.put("/empleados/{dni}/baja")
+def dar_de_baja(dni: str, datos: schemas.EmpleadoBaja, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    
+    empleado.activo = False
+    empleado.motivo_baja = datos.motivo
+    db.commit()
+    return {"mensaje": "Empleado dado de baja"}
 
 @app.post("/entrada")
-def registrar_entrada(datos: schemas.AsistenciaEntrada):
-    db: Session = SessionLocal()
-    try:
-        # 1. Buscar empleado
-        empleado = db.query(models.Empleado).filter(
-            models.Empleado.dni == datos.dni, 
-            models.Empleado.activo == True
-        ).first()
-        
-        if not empleado:
-            raise HTTPException(status_code=404, detail="Empleado no encontrado o inactivo")
-        
-        # 2. Verificar si ya marcó hoy
-        hoy = date.today()
-        asistencia_hoy = db.query(models.Asistencia).filter(
-            models.Asistencia.empleado_id == empleado.id,
-            models.Asistencia.fecha == hoy
-        ).first()
-
-        if asistencia_hoy:
-            raise HTTPException(status_code=400, detail="Ya se registró una entrada hoy para este DNI")
-
-        # 3. Guardar registro
-        nueva_asistencia = models.Asistencia(
-            empleado_id=empleado.id,
-            hora_entrada=datos.hora_llegada,
-            estado=datos.estado
-        )
-        db.add(nueva_asistencia)
-        db.commit()
-        
-        # Guardamos el nombre antes de cerrar la sesión para evitar el DetachedInstanceError
-        nombre = empleado.nombre_completo
-        return {"mensaje": f"Entrada registrada para {nombre}. Estado: {datos.estado}"}
-    finally:
-        db.close()
+def registrar_entrada(datos: schemas.EntradaData, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni, models.Empleado.activo == True).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado o está inactivo")
+    
+    hoy = date.today()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == hoy).first()
+    
+    if asistencia and asistencia.hora_entrada:
+        raise HTTPException(status_code=400, detail="La entrada ya fue registrada para el día de hoy")
+    
+    if not asistencia:
+        asistencia = models.Asistencia(empleado_id=empleado.id, fecha=hoy)
+        db.add(asistencia)
+    
+    hora_llegada_dt = datetime.strptime(datos.hora_llegada, "%H:%M:%S").time()
+    asistencia.hora_entrada = hora_llegada_dt
+    asistencia.estado = datos.estado
+    
+    if datos.estado == "Tardanza":
+        dt_llegada = datetime.combine(hoy, hora_llegada_dt)
+        dt_turno = datetime.combine(hoy, empleado.hora_entrada_turno)
+        diferencia_minutos = (dt_llegada - dt_turno).total_seconds() / 60
+        if diferencia_minutos > 0:
+            asistencia.minutos_tardanza = int(diferencia_minutos)
+            
+    db.commit()
+    return {"mensaje": "Marcación de entrada registrada"}
 
 @app.post("/salida")
-def registrar_salida(datos: schemas.AsistenciaSalida):
-    db: Session = SessionLocal()
-    try:
-        empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
-        if not empleado:
-            raise HTTPException(status_code=404, detail="Empleado no encontrado")
-            
-        hoy = date.today()
-        asistencia = db.query(models.Asistencia).filter(
-            models.Asistencia.empleado_id == empleado.id,
-            models.Asistencia.fecha == hoy
-        ).first()
-
-        if not asistencia:
-            raise HTTPException(status_code=400, detail="No existe un registro de entrada para hoy")
-            
-        if asistencia.hora_salida:
-            raise HTTPException(status_code=400, detail="Ya se registró la salida hoy")
-
-        # 1. Guardamos la hora de salida real
-        asistencia.hora_salida = datos.hora_salida
+def registrar_salida(datos: schemas.SalidaData, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni, models.Empleado.activo == True).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    
+    hoy = date.today()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == hoy).first()
+    
+    if not asistencia or not asistencia.hora_entrada:
+        raise HTTPException(status_code=400, detail="Debe registrar su entrada primero")
+    
+    hora_salida_dt = datetime.strptime(datos.hora_salida, "%H:%M:%S").time()
+    asistencia.hora_salida = hora_salida_dt
+    
+    dt_salida = datetime.combine(hoy, hora_salida_dt)
+    dt_turno_salida = datetime.combine(hoy, empleado.hora_salida_turno)
+    diferencia_extra = (dt_salida - dt_turno_salida).total_seconds() / 60
+    
+    if diferencia_extra >= 15: 
+        bloques_completos = int(diferencia_extra // 15)
+        asistencia.minutos_extra = bloques_completos * 15 
+    else:
+        asistencia.minutos_extra = 0
         
-        # 2. LLAMAMOS AL MOTOR MATEMÁTICO
-        # Pasamos el turno del empleado y sus marcaciones reales
-        resultados = calculos.calcular_horas(
-            entrada_turno=empleado.hora_entrada_turno,
-            salida_turno=empleado.hora_salida_turno,
-            entrada_real=asistencia.hora_entrada,
-            salida_real=asistencia.hora_salida
-        )
+    db.commit()
+    return {"mensaje": "Marcación de salida registrada"}
+
+@app.get("/asistencias/monitor")
+def obtener_monitor_asistencias(db: Session = Depends(get_db)):
+    asistencias = db.query(models.Asistencia).order_by(models.Asistencia.fecha.desc(), models.Asistencia.id.desc()).all()
+    resultado = []
+    for asis in asistencias:
+        emp = asis.empleado 
+        if not emp:
+            continue
         
-        # 3. Actualizamos la base de datos con los resultados matemáticos
-        asistencia.horas_trabajadas = resultados["horas_trabajadas"]
-        asistencia.minutos_tardanza = resultados["minutos_tardanza"]
-        asistencia.minutos_extra = resultados["minutos_extra"]
-
-        # 4. Guardamos todo
-        db.commit()
+        entrada_str = asis.hora_entrada.strftime("%H:%M") if asis.hora_entrada else "--:--"
+        salida_str = asis.hora_salida.strftime("%H:%M") if asis.hora_salida else "--:--"
         
-        nombre = empleado.nombre_completo
-        return {"mensaje": f"Salida y cálculos registrados exitosamente para {nombre}"}
-    finally:
-        db.close()
+        m_extra = asis.minutos_extra or 0
+        h_ext = int(m_extra // 60)
+        m_ext = int(m_extra % 60)
+        str_extra = f"{h_ext}h {m_ext}m" if m_extra > 0 else "0h"
+        
+        # Unificamos el nombre completo para el monitor
+        nombre_completo = f"{emp.nombres} {emp.apellido_paterno} {emp.apellido_materno}".strip()
+        
+        resultado.append({
+            "dni": emp.dni,
+            "nombre_completo": nombre_completo,
+            "fecha": asis.fecha.strftime("%Y-%m-%d"),
+            "hora_entrada": entrada_str,
+            "hora_salida": salida_str,
+            "minutos_tardanza": int(asis.minutos_tardanza or 0),
+            "horas_extra": str_extra,
+            "estado": asis.estado
+        })
+    return resultado
 
-from fastapi.staticfiles import StaticFiles
-
-# Esto le dice a FastAPI que busque los archivos web en la carpeta /static
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/", StaticFiles(directory=".", html=True), name="static")

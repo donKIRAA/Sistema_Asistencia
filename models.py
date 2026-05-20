@@ -1,38 +1,40 @@
-from sqlalchemy import Column, Integer, String, Time, Date, ForeignKey, Boolean, Float
+from sqlalchemy import Boolean, Column, Integer, String, Time, Date, ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import time, date
+from datetime import time
 from database import Base
-
-class Admin(Base):
-    __tablename__ = "administradores"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    password = Column(String)
 
 class Empleado(Base):
     __tablename__ = "empleados"
     id = Column(Integer, primary_key=True, index=True)
     dni = Column(String, unique=True, index=True)
-    nombre_completo = Column(String)
+    
+    # --- DATOS PERSONALES DESGLOSADOS ---
+    nombres = Column(String)
+    apellido_paterno = Column(String)
+    apellido_materno = Column(String)
+    
+    # --- DATOS DE CONTACTO ---
+    correo = Column(String, nullable=True)
+    celular = Column(String, nullable=True)
+    contacto_emergencia = Column(String, nullable=True)
+    
     foto_perfil = Column(String, nullable=True) 
     hora_entrada_turno = Column(Time, default=time(8, 0)) 
     hora_salida_turno = Column(Time, default=time(18, 0)) 
     activo = Column(Boolean, default=True) 
-    # --- NUEVO CAMPO ---
-    motivo_baja = Column(String, nullable=True)
+    motivo_baja = Column(String, nullable=True) 
+    
+    asistencias = relationship("Asistencia", back_populates="empleado")
 
 class Asistencia(Base):
     __tablename__ = "asistencias"
     id = Column(Integer, primary_key=True, index=True)
     empleado_id = Column(Integer, ForeignKey("empleados.id"))
-    fecha = Column(Date, default=date.today)
-    hora_entrada = Column(Time, nullable=True) 
-    hora_salida = Column(Time, nullable=True)  
+    fecha = Column(Date)
+    hora_entrada = Column(Time, nullable=True)
+    hora_salida = Column(Time, nullable=True)
     estado = Column(String) 
+    minutos_tardanza = Column(Integer, default=0)
+    minutos_extra = Column(Integer, default=0)
     
-    # --- NUEVOS CAMPOS PARA EL CÁLCULO ---
-    horas_trabajadas = Column(Float, default=0.0)
-    minutos_tardanza = Column(Float, default=0.0)
-    minutos_extra = Column(Float, default=0.0) # Preparando el terreno para el Paso 6
-    
-    empleado = relationship("Empleado")
+    empleado = relationship("Empleado", back_populates="asistencias")

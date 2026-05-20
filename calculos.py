@@ -2,7 +2,9 @@ from datetime import datetime, time
 
 def calcular_horas(entrada_turno: time, salida_turno: time, entrada_real: time, salida_real: time):
     """
-    Motor matemático para procesar las horas de la jornada con redondeo dinámico.
+    Motor matemático actualizado:
+    - Tardanza: Se contabiliza desde el primer minuto.
+    - Horas Extra: Umbral de 45 minutos para redondear a 1 hora (ej: 45m = 1h, 1h 45m = 2h).
     """
     fecha_base = datetime.today()
 
@@ -15,35 +17,26 @@ def calcular_horas(entrada_turno: time, salida_turno: time, entrada_real: time, 
     tiempo_total = dt_sal_real - dt_ent_real
     horas_trabajadas = max(tiempo_total.total_seconds() / 3600, 0)
 
-    # 2. Cálculo de Tardanza con Tiempo de Gracia (Ej: 5 minutos de tolerancia)
+    # 2. Cálculo de Tardanza (Sin tolerancia: cualquier minuto cuenta)
     minutos_tardanza = 0.0
     if dt_ent_real > dt_ent_turno:
         tardanza = dt_ent_real - dt_ent_turno
-        minutos_brutos_tardanza = tardanza.total_seconds() / 60
-        
-        # Si llega hasta 5 minutos tarde, no se considera tardanza
-        if minutos_brutos_tardanza > 5:
-            minutos_tardanza = minutos_brutos_tardanza
+        minutos_tardanza = tardanza.total_seconds() / 60
 
-    # 3. Cálculo de Horas Extra con REDONDEO DINÁMICO
+    # 3. Cálculo de Horas Extra (REGLA: A partir de 45 min)
     minutos_extra = 0.0
     if dt_sal_real > dt_sal_turno:
         extra = dt_sal_real - dt_sal_turno
         minutos_extra_brutos = extra.total_seconds() / 60
         
-        # REGLAS DE NEGOCIO PARA EXTRAS:
-        # - Umbral mínimo: Debe quedarse al menos 15 minutos para que cuente como extra.
-        # - Bloque de redondeo: Se cuenta en bloques exactos de 15 minutos (evita fracciones difíciles de pagar).
-        UMBRAL_MINIMO = 15
-        BLOQUE_REDONDEO = 15
-        
-        if minutos_extra_brutos >= UMBRAL_MINIMO:
-            # División entera (//) para saber cuántos bloques completos de 15 min hizo
-            bloques_completos = int(minutos_extra_brutos // BLOQUE_REDONDEO)
-            minutos_extra = bloques_completos * BLOQUE_REDONDEO
+        # Lógica de redondeo:
+        # Sumamos 15 minutos al bruto antes de dividir entre 60.
+        # Esto hace que 45min (45+15=60) se convierta en 1 hora, y 44min no alcance.
+        if minutos_extra_brutos >= 45:
+            minutos_extra = ((minutos_extra_brutos + 15) // 60) * 60
 
     return {
         "horas_trabajadas": round(horas_trabajadas, 2),
         "minutos_tardanza": round(minutos_tardanza, 2),
-        "minutos_extra": float(minutos_extra)
+        "minutos_extra": float(minutos_extra) 
     }

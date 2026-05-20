@@ -1,42 +1,44 @@
-from pydantic import BaseModel, Field
-from datetime import time
+from pydantic import BaseModel
 from typing import Optional
 
-# Esquema para crear un empleado nuevo
-class EmpleadoCreate(BaseModel):
-    dni: str = Field(..., min_length=8, max_length=8, pattern=r"^\d{8}$")
-    nombre_completo: str
-    foto_perfil: Optional[str] = None
-    hora_entrada_turno: time = time(8, 0)
-    hora_salida_turno: time = time(18, 0)
-
-# Esquema para las marcaciones de asistencia (ya lo tenías)
-class AsistenciaEntrada(BaseModel):
-    dni: str = Field(..., min_length=8, max_length=8, pattern=r"^\d{8}$")
-    hora_llegada: time
-    estado: str = Field(..., pattern="^(Asistencia|Falta|Tardanza)$")
-
-class AsistenciaSalida(BaseModel):
-    dni: str = Field(..., min_length=8, max_length=8, pattern=r"^\d{8}$")
-    hora_salida: time
-
-class AdminLogin(BaseModel):
+class LoginData(BaseModel):
     username: str
     password: str
 
-class EmpleadoUpdate(BaseModel):
-    nombre_completo: Optional[str] = None
+class EmpleadoBase(BaseModel):
+    dni: str
+    nombres: str
+    apellido_paterno: str
+    apellido_materno: str
+    correo: Optional[str] = None
+    celular: Optional[str] = None
+    contacto_emergencia: Optional[str] = None
+    hora_entrada_turno: str
+    hora_salida_turno: str
     foto_perfil: Optional[str] = None
-    hora_entrada_turno: Optional[time] = None
-    hora_salida_turno: Optional[time] = None
+
+class EmpleadoCreate(EmpleadoBase):
+    pass
 
 class EmpleadoUpdate(BaseModel):
-    nombre_completo: Optional[str] = None
+    nombres: str
+    apellido_paterno: str
+    apellido_materno: str
+    correo: Optional[str] = None
+    celular: Optional[str] = None
+    contacto_emergencia: Optional[str] = None
+    hora_entrada_turno: str
+    hora_salida_turno: str
     foto_perfil: Optional[str] = None
-    hora_entrada_turno: Optional[time] = None
-    hora_salida_turno: Optional[time] = None
-    activo: Optional[bool] = None # <--- AÑADIMOS ESTO
 
-# Añadir al final de schemas.py
 class EmpleadoBaja(BaseModel):
     motivo: str
+
+class EntradaData(BaseModel):
+    dni: str
+    hora_llegada: str
+    estado: str
+
+class SalidaData(BaseModel):
+    dni: str
+    hora_salida: str
