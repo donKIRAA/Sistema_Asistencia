@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIA - Gestión de Asistencia</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="pantalla-login" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; width: 100%;">
+        <div class="registro-card">
+            <h2 style="text-align: center; margin-bottom: 20px;">Acceso Restringido</h2>
+            <div class="campo"><input type="text" id="login_user" placeholder="Usuario"></div>
+            <div class="campo"><input type="password" id="login_pass" placeholder="Contraseña"></div>
+            <button class="btn-guardar" onclick="iniciarSesion()">Ingresar al Sistema</button>
+        </div>
+    </div>
+
+    <div id="dashboard" style="display: none; width: 100%;">
+        <div class="sidebar">
+            <h2>Panel Supervisor</h2>
+            <button onclick="mostrarPantalla('entrada')">Registro de Entrada</button>
+            <button onclick="mostrarPantalla('salida')">Registro de Salida</button>
+            <button onclick="mostrarPantalla('gestion')" style="background: #16a085; margin-top: 30px;">Gestión de Personal</button>
+            <button onclick="mostrarPantalla('monitor')" style="background: #e67e22; margin-top: 10px;">Monitor de Asistencias</button>
+            <button id="btn-logout" onclick="cerrarSesion()">Cerrar Sesión</button>
+        </div>
+
+        <div class="main-content">
+            <div id="seccion-asistencia">
+                <div class="gestion-toolbar" style="margin-bottom: 20px;">
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <h1 id="titulo-pantalla" style="margin: 0; color: #2c3e50; font-size: 24px;">Registro de Entrada</h1>
+                        <select id="filtro_horario_salida" class="filtro-date hidden" onchange="filtrarLista()">
+                            <option value="">Filtrar por Horario...</option>
+                        </select>
+                    </div>
+                    <div class="controles-derecha">
+                        <div class="search-box">
+                            <span>🔍</span>
+                            <input type="text" id="busqueda_rapida" placeholder="Buscar por Nombre o DNI..." onkeyup="filtrarLista()">
+                        </div>
+                    </div>
+                </div>
+                <div id="lista-empleados" class="grid-empleados"></div>
+            </div>
+
+            <div id="seccion-gestion" class="hidden">
+                <h1 id="titulo-gestion" style="margin-top: 0; color: #2c3e50; font-size: 24px;">Gestión de Personal</h1>
+                <div class="gestion-toolbar">
+                    <div class="tabs-gestion">
+                        <button id="tab-activos" class="tab-btn active" onclick="cambiarPestanaGestion('activos')">Empleados Activos</button>
+                        <button id="tab-todos" class="tab-btn" onclick="cambiarPestanaGestion('todos')">Historial de Empleados</button>
+                    </div>
+                    <div class="controles-derecha">
+                        <div class="search-box"><span>🔍</span><input type="text" id="busqueda_gestion" placeholder="Buscar empleado..." onkeyup="filtrarTablaGestion()"></div>
+                        <button class="btn-add-empleado" onclick="abrirModalEmpleado()"><span style="font-size: 18px; font-weight: bold;">+</span> Registrar Empleado</button>
+                    </div>
+                </div>
+                <div class="lista-gestion" style="width: 100%; box-sizing: border-box;">
+                    <div style="overflow-x: auto;">
+                        <table class="tabla-empleados">
+                            <thead id="tabla-empleados-head"></thead>
+                            <tbody id="tabla-empleados-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="seccion-monitor" class="hidden">
+                <h1 style="margin-top: 0; color: #2c3e50; font-size: 24px;">Monitor de Asistencias</h1>
+                <div class="kpi-container">
+                    <div class="kpi-card"><h3>Asistencias Hoy</h3><div class="kpi-value" id="kpi-asistencias">0</div></div>
+                    <div class="kpi-card" style="border-left-color: #f39c12;"><h3>Tardanzas Hoy</h3><div class="kpi-value" id="kpi-tardanzas" style="color: #f39c12;">0</div></div>
+                    <div class="kpi-card" style="border-left-color: #c0392b;"><h3>Faltas Hoy</h3><div class="kpi-value" id="kpi-faltas" style="color: #c0392b;">0</div></div>
+                </div>
+                <div class="gestion-toolbar" style="margin-top: 20px;">
+                    <div class="controles-derecha" style="width: 100%; justify-content: space-between;">
+                        <div style="display: flex; gap: 15px; align-items: center;">
+                            <label style="font-weight: bold; color: #2c3e50;">Filtrar por Fecha:</label>
+                            <input type="date" id="filtro-fecha-monitor" class="filtro-date" onchange="cargarTablaMonitor()">
+                            <button class="btn-accion" style="background: #7f8c8d;" onclick="limpiarFiltroMonitor()">Ver Todo</button>
+                        </div>
+                        <div class="search-box"><span>🔍</span><input type="text" id="busqueda_monitor" placeholder="Buscar empleado..." onkeyup="filtrarTablaMonitor()"></div>
+                    </div>
+                </div>
+                <div class="lista-gestion" style="width: 100%; box-sizing: border-box;">
+                    <div style="overflow-x: auto;">
+                        <table class="tabla-empleados">
+                            <thead id="tabla-monitor-head">
+                                <tr><th>DNI</th><th>Empleado</th><th>Fecha</th><th style="text-align: center;">Entrada</th><th style="text-align: center;">Salida</th><th style="text-align: center;">Tardanza</th><th style="text-align: center;">Hrs Extra</th><th style="text-align: center;">Estado</th></tr>
+                            </thead>
+                            <tbody id="tabla-monitor-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+    <div id="modal-confirmacion" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 style="margin-top: 0; color: #2c3e50;">Confirmar Acción</h3><p id="modal-mensaje">¿Estás seguro?</p>
+            <div class="modal-botones"><button id="btn-modal-cancelar" class="btn-modal btn-cancelar">Cancelar</button><button id="btn-modal-aceptar" class="btn-modal btn-aceptar">Aceptar</button></div>
+        </div>
+    </div>
+
+    <div id="modal-recordatorio" class="modal-overlay hidden" style="z-index: 12000;">
+        <div class="modal-box" style="border-top: 5px solid #f39c12;">
+            <h3 style="margin-top: 0; color: #e67e22; font-size: 22px;">⏰ ¡Atención Supervisor!</h3>
+            <p id="texto-recordatorio" style="font-size: 16px; color: #2c3e50; font-weight: bold; line-height: 1.5;"></p>
+            <div class="modal-botones">
+                <button class="btn-modal btn-aceptar" style="background: #e67e22;" onclick="document.getElementById('modal-recordatorio').classList.add('hidden')">Entendido</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-autorizacion" class="modal-overlay hidden" style="z-index: 10500;">
+        <div class="modal-box">
+            <h3 style="margin-top: 0; color: #c0392b;">Autorización Requerida</h3>
+            <p style="font-size: 14px; color: #34495e;">Ingrese las credenciales del Supervisor para ejecutar esta acción.</p>
+            <div class="campo"><input type="text" id="auth_user" placeholder="Usuario Administrador" autocomplete="off"></div>
+            <div class="campo"><input type="password" id="auth_pass" placeholder="Contraseña"></div>
+            <div class="modal-botones">
+                <button class="btn-modal btn-cancelar" onclick="cerrarModalAutorizacion()">Cancelar</button>
+                <button class="btn-modal btn-aceptar" onclick="verificarAutorizacion()">Autorizar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-empleado" class="modal-overlay hidden">
+        <div class="modal-box" style="text-align: left; max-width: 550px; width: 100%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 id="form-titulo" style="margin: 0; color: #2c3e50;">Registrar Nuevo Empleado</h3>
+                <span style="cursor:pointer; font-size: 24px; font-weight: bold; color: #7f8c8d;" onclick="cerrarModalEmpleado()">×</span>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 15px;">
+                <label for="reg_foto" class="foto-upload-box" id="foto-preview-box" title="Haz clic para subir una foto"><span class="foto-plus">+</span></label>
+                <input type="file" id="reg_foto" accept="image/png, image/jpeg, image/jpg" class="hidden" onchange="previsualizarFoto(event)">
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <div class="campo" style="flex: 1;"><input type="text" id="reg_nombres" placeholder="Nombres" oninput="this.value = this.value.toUpperCase()"></div>
+                <div class="campo" style="flex: 1;"><input type="text" id="reg_dni" placeholder="DNI (8 dígitos)" maxlength="8" oninput="this.value = this.value.replace(/[^0-9]/g, '')"></div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <div class="campo" style="flex: 1;"><input type="text" id="reg_ap_paterno" placeholder="Apellido Paterno" oninput="this.value = this.value.toUpperCase()"></div>
+                <div class="campo" style="flex: 1;"><input type="text" id="reg_ap_materno" placeholder="Apellido Materno" oninput="this.value = this.value.toUpperCase()"></div>
+            </div>
+            <div class="campo"><input type="text" id="reg_correo" placeholder="Correo Electrónico (Obligatorio)"></div>
+            <div style="display: flex; gap: 10px;">
+                <div class="campo" style="flex: 1;"><input type="text" id="reg_celular" placeholder="N° Celular (9 dígitos)" maxlength="9" oninput="this.value = this.value.replace(/[^0-9]/g, '')"></div>
+                <div class="campo" style="flex: 1;"><input type="text" id="reg_emergencia" placeholder="Contacto de Emergencia" maxlength="9" oninput="this.value = this.value.replace(/[^0-9]/g, '')"></div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <div class="campo" style="flex: 1;"><label style="display:block; margin-bottom:5px; font-size: 14px; font-weight:bold;">Entrada:</label><input type="time" id="reg_entrada" value="08:00" style="width: 100%; box-sizing: border-box;"></div>
+                <div class="campo" style="flex: 1;"><label style="display:block; margin-bottom:5px; font-size: 14px; font-weight:bold;">Salida:</label><input type="time" id="reg_salida" value="18:00" style="width: 100%; box-sizing: border-box;"></div>
+            </div>
+            
+            <button id="btn-guardar-nuevo" class="btn-guardar" style="background: #2980b9; margin-top: 10px;" onclick="guardarNuevoEmpleado()">Guardar Empleado</button>
+            <div id="controles-edicion" class="hidden">
+                <button class="btn-guardar" style="background: #f39c12; margin-top: 10px;" onclick="enviarEdicion()">Actualizar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-baja" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 style="margin-top: 0; color: #c0392b;">Confirmar Baja de Empleado</h3>
+            <p style="margin-bottom: 10px;">DNI: <strong id="baja-dni"></strong></p>
+            <textarea id="baja-motivo" rows="4" style="width: 100%; box-sizing: border-box; padding: 10px; border-radius: 5px; border: 1px solid #ccc; font-family: inherit; margin-bottom: 15px;" placeholder="Ej: Renuncia voluntaria..."></textarea>
+            <div class="modal-botones"><button class="btn-modal btn-cancelar" onclick="cerrarModalBaja()">Cancelar</button><button class="btn-modal btn-aceptar" onclick="ejecutarBaja()">Confirmar Baja</button></div>
+        </div>
+    </div>
+    
+    <div id="modal-justificacion" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 style="margin-top: 0; color: #2c3e50;">Justificación de Baja</h3>
+            <div id="texto-justificacion" style="background: #f4f7f6; padding: 15px; border-radius: 5px; border-left: 4px solid #f39c12; text-align: left; margin-bottom: 20px; font-style: italic; color: #34495e;"></div>
+            <div class="modal-botones"><button class="btn-modal btn-cancelar" onclick="document.getElementById('modal-justificacion').classList.add('hidden')">Cerrar Ventana</button></div>
+        </div>
+    </div>
+    <div id="modal-historial-empleado" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 800px; width: 90%; padding: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 15px;">
+                <h2 id="historial-nombre-empleado" style="margin: 0; color: #2c3e50; font-size: 22px;">Nombre del Empleado</h2>
+                <span style="cursor:pointer; font-size: 28px; font-weight: bold; color: #7f8c8d; line-height: 1;" onclick="cerrarModalHistorial()">×</span>
+            </div>
+            <div style="max-height: 450px; overflow-y: auto; border: 1px solid #eee; border-radius: 5px;">
+                <table class="tabla-empleados" style="width: 100%; margin-top: 0;">
+                    <thead style="position: sticky; top: 0; background: #2c3e50; z-index: 1;">
+                        <tr><th style="text-align: center;">Fecha</th><th style="text-align: center;">Entrada</th><th style="text-align: center;">Salida</th><th style="text-align: center;">Asistencia</th><th style="text-align: center;">Hrs Extras</th></tr>
+                    </thead>
+                    <tbody id="tabla-historial-individual-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
