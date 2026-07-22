@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.git
+.gitignore
+.env
+sistema_asistencia.db
+documentos_legales/*.pdf
+documentos_legales/*.png

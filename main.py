@@ -1,0 +1,549 @@
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime, date, time, timedelta
+import models, schemas
+from database import engine, SessionLocal
+import base64
+import os
+import smtplib
+import csv
+import io
+import requests
+from calendar import monthrange
+from email.message import EmailMessage
+from fpdf import FPDF
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+models.Base.metadata.create_all(bind=engine)
+app = FastAPI(title="SIA - Backend de Asistencia")
+
+# --- Configuración Supabase Storage (para persistir PDFs, ya que el disco de Render es efímero) ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "documentos-legales")
+
+def storage_habilitado():
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
+
+def subir_a_supabase_storage(ruta_local: str, nombre_archivo: str) -> bool:
+    if not storage_habilitado(): return False
+    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{nombre_archivo}"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Content-Type": "application/pdf",
+        "x-upsert": "true",
+    }
+    try:
+        with open(ruta_local, "rb") as f:
+            resp = requests.post(url, headers=headers, data=f.read(), timeout=20)
+        return resp.status_code in (200, 201)
+    except Exception:
+        return False
+
+def descargar_de_supabase_storage(nombre_archivo: str):
+    if not storage_habilitado(): return None
+    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{nombre_archivo}"
+    headers = {"Authorization": f"Bearer {SUPABASE_SERVICE_KEY}", "apikey": SUPABASE_SERVICE_KEY}
+    try:
+        resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code == 200: return resp.content
+        return None
+    except Exception:
+        return None
+
+def get_db():
+    db = SessionLocal()
+    try: yield db
+    finally: db.close()
+
+def procesar_faltas_automaticas_global(db: Session):
+    hoy = date.today()
+    ahora = datetime.now().time()
+    empleados = db.query(models.Empleado).filter(models.Empleado.activo == True).all()
+    for emp in empleados:
+        if not db.query(models.Asistencia).filter(models.Asistencia.empleado_id == emp.id, models.Asistencia.fecha == hoy).first():
+            if ahora > emp.hora_salida_turno:
+                db.add(models.Asistencia(empleado_id=emp.id, fecha=hoy, estado="Falta", hora_entrada=time(0,0)))
+    db.commit()
+
+def enviar_correo_real(correo_destino: str, asunto: str, cuerpo: str, ruta_adjunto: str):
+    remitente = os.environ.get("SMTP_USER", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+    if not correo_destino or not remitente or not password: return True
+    msg = EmailMessage()
+    msg['Subject'] = asunto
+    msg['From'] = remitente
+    msg['To'] = correo_destino
+    msg.set_content(cuerpo)
+    if ruta_adjunto and os.path.exists(ruta_adjunto):
+        with open(ruta_adjunto, 'rb') as f:
+            msg.add_attachment(f.read(), maintype='application', subtype='pdf', filename=os.path.basename(ruta_adjunto))
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(remitente, password)
+            smtp.send_message(msg)
+        return True
+    except: return False
+
+def procesar_cola_correos(db_bg: Session):
+    pendientes = db_bg.query(models.ColaMensaje).filter(models.ColaMensaje.estado == "Pendiente").all()
+    for msg in pendientes:
+        if enviar_correo_real(msg.destino, "Notificación de Recursos Humanos", msg.mensaje, msg.archivo_adjunto):
+            msg.estado = "Enviado"
+            db_bg.add(models.Notificacion(mensaje=f"✅ Correo enviado correctamente a {msg.destino}", tipo="exito"))
+        else:
+            msg.estado = "Error"
+            db_bg.add(models.Notificacion(mensaje=f"❌ Error al enviar correo a {msg.destino}.", tipo="alerta"))
+    db_bg.commit()
+
+@app.post("/login")
+def login(data: schemas.LoginData):
+    admin_user = os.environ.get("ADMIN_USER", "admin")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    if data.username == admin_user and data.password == admin_password: return {"mensaje": "Login exitoso"}
+    raise HTTPException(status_code=404, detail="Credenciales incorrectas")
+
+@app.get("/empleados")
+def obtener_empleados_activos(db: Session = Depends(get_db)):
+    procesar_faltas_automaticas_global(db)
+    return db.query(models.Empleado).filter(models.Empleado.activo == True).all()
+
+@app.get("/empleados/todos")
+def obtener_todos_empleados(db: Session = Depends(get_db)):
+    return db.query(models.Empleado).all()
+
+@app.post("/empleados")
+def crear_empleado(datos: schemas.EmpleadoCreate, db: Session = Depends(get_db)):
+    if db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first(): raise HTTPException(status_code=400, detail="El DNI ya existe")
+    nuevo = models.Empleado(
+        dni=datos.dni, nombres=datos.nombres.upper(), apellido_paterno=datos.apellido_paterno.upper(), apellido_materno=datos.apellido_materno.upper(),
+        correo=datos.correo, celular=datos.celular, contacto_emergencia=datos.contacto_emergencia,
+        hora_entrada_turno=datetime.strptime(datos.hora_entrada_turno, "%H:%M:%S").time(),
+        hora_salida_turno=datetime.strptime(datos.hora_salida_turno, "%H:%M:%S").time(), foto_perfil=datos.foto_perfil
+    )
+    db.add(nuevo); db.commit(); return {"mensaje": "Empleado guardado"}
+
+@app.put("/empleados/{dni}")
+def editar_empleado(dni: str, datos: schemas.EmpleadoUpdate, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+    if not empleado: raise HTTPException(status_code=404, detail="No encontrado")
+    empleado.nombres = datos.nombres.upper(); empleado.apellido_paterno = datos.apellido_paterno.upper(); empleado.apellido_materno = datos.apellido_materno.upper()
+    empleado.correo = datos.correo; empleado.celular = datos.celular; empleado.contacto_emergencia = datos.contacto_emergencia
+    empleado.hora_entrada_turno = datetime.strptime(datos.hora_entrada_turno, "%H:%M:%S").time()
+    empleado.hora_salida_turno = datetime.strptime(datos.hora_salida_turno, "%H:%M:%S").time()
+    if datos.foto_perfil: empleado.foto_perfil = datos.foto_perfil
+    db.commit(); return {"mensaje": "Actualizado"}
+
+@app.put("/empleados/{dni}/baja")
+def dar_de_baja(dni: str, datos: schemas.EmpleadoBaja, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+    empleado.activo = False; empleado.motivo_baja = datos.motivo; db.commit(); return {"mensaje": "Dado de baja"}
+
+@app.post("/entrada")
+def registrar_entrada(datos: schemas.EntradaData, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni, models.Empleado.activo == True).first()
+    hoy = date.today()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == hoy).first()
+    if not asistencia:
+        asistencia = models.Asistencia(empleado_id=empleado.id, fecha=hoy)
+        db.add(asistencia)
+    hora_llegada_dt = datetime.strptime(datos.hora_llegada, "%H:%M:%S").time()
+    asistencia.hora_entrada = hora_llegada_dt; asistencia.estado = datos.estado
+    if datos.estado == "Tardanza":
+        diff = (datetime.combine(hoy, hora_llegada_dt) - datetime.combine(hoy, empleado.hora_entrada_turno)).total_seconds() / 60
+        asistencia.minutos_tardanza = int(diff) if diff > 0 else 0
+    db.commit(); return {"mensaje": "Entrada registrada"}
+
+@app.put("/asistencias/modificar_entrada")
+def modificar_entrada(datos: schemas.EntradaData, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
+    hoy = date.today()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == hoy).first()
+    if not asistencia:
+        asistencia = models.Asistencia(empleado_id=empleado.id, fecha=hoy)
+        db.add(asistencia)
+    hora_llegada_dt = datetime.strptime(datos.hora_llegada, "%H:%M:%S").time()
+    asistencia.hora_entrada = hora_llegada_dt; asistencia.estado = datos.estado
+    if datos.estado == "Tardanza":
+        diff = (datetime.combine(hoy, hora_llegada_dt) - datetime.combine(hoy, empleado.hora_entrada_turno)).total_seconds() / 60
+        asistencia.minutos_tardanza = int(diff) if diff > 0 else 0
+    else: asistencia.minutos_tardanza = 0
+    db.commit(); return {"mensaje": "Modificada"}
+
+@app.post("/salida")
+def registrar_salida(datos: schemas.SalidaData, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni, models.Empleado.activo == True).first()
+    hoy = date.today()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == hoy).first()
+    hora_salida_dt = datetime.strptime(datos.hora_salida, "%H:%M:%S").time()
+    asistencia.hora_salida = hora_salida_dt
+    diff_extra = (datetime.combine(hoy, hora_salida_dt) - datetime.combine(hoy, empleado.hora_salida_turno)).total_seconds() / 60
+    asistencia.minutos_extra = int(diff_extra // 15) * 15 if diff_extra >= 15 else 0
+    db.commit(); return {"mensaje": "Salida registrada"}
+
+@app.put("/asistencias/justificar")
+def justificar_falta(datos: schemas.JustificacionData, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
+    fecha_obj = datetime.strptime(datos.fecha, "%Y-%m-%d").date()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == fecha_obj).first()
+    asistencia.estado = "Justificada"; asistencia.justificacion_motivo = datos.motivo
+    if datos.archivo_base64: asistencia.justificacion_archivo = datos.archivo_base64
+    db.commit(); return {"mensaje": "Justificación registrada"}
+
+@app.put("/asistencias/firmar_documento")
+def firmar_documento(datos: schemas.FirmaData, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == datos.dni).first()
+    fecha_obj = datetime.strptime(datos.fecha, "%Y-%m-%d").date()
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.fecha == fecha_obj).first()
+    if not asistencia: raise HTTPException(status_code=404, detail="Registro no encontrado")
+    sanciones_previas = db.query(models.Asistencia).filter(models.Asistencia.empleado_id == empleado.id, models.Asistencia.estado == "Sancionada").count()
+    numero_falta = sanciones_previas + 1
+    if not os.path.exists("documentos_legales"): os.makedirs("documentos_legales")
+    ruta_firma = f"documentos_legales/firma_temp_{datos.dni}.png"
+    with open(ruta_firma, "wb") as fh: fh.write(base64.b64decode(datos.firma_base64.split(",")[1]))
+    pdf = FPDF()
+    pdf.add_page(); pdf.set_font("Arial", 'B', 16)
+    if numero_falta >= 3:
+        titulo_doc = "CARTA DE DESPIDO"
+        cuerpo = f"Por medio de la presente, se le notifica formalmente su DESVINCULACIÓN LABORAL debido a la acumulación de {numero_falta} inasistencias injustificadas, siendo la más reciente el día {datos.fecha}."
+        ruta_pdf = f"documentos_legales/Despido_{empleado.dni}_{datos.fecha}.pdf"
+        alerta = f"⛔ {empleado.nombres} ha alcanzado las 3 faltas y ha sido DESPEDIDO."
+    else:
+        titulo_doc = "MEMORÁNDUM DE INASISTENCIA"
+        cuerpo = f"Por medio de la presente, se le notifica formalmente sobre su inasistencia injustificada (Falta #{numero_falta}) ocurrida el día {datos.fecha}. Se le recuerda que acumular 3 conllevará despido."
+        ruta_pdf = f"documentos_legales/Memo_{empleado.dni}_{datos.fecha}.pdf"
+        alerta = f"⚠️ {empleado.nombres} recibió su 1er Memo (Faltan 2 para despido)." if numero_falta == 1 else f"🚨 {empleado.nombres} recibió su 2do Memo (A 1 falta del despido)."
+    pdf.cell(0, 10, txt=titulo_doc, ln=True, align='C')
+    pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, txt="SERVICIOS GENERALES FAMMA E.I.R.L.", ln=True, align='C'); pdf.ln(10)
+    pdf.set_font("Arial", '', 12); pdf.cell(0, 10, txt=f"Fecha de emisión: {date.today().strftime('%Y-%m-%d')}", ln=True)
+    pdf.cell(0, 10, txt=f"Dirigido a: {empleado.nombres} {empleado.apellido_paterno}", ln=True)
+    pdf.ln(10); pdf.multi_cell(0, 10, txt=cuerpo); pdf.ln(20)
+
+    # --- Bloque de firmas: Supervisor (izquierda, digital) y Empleado (derecha, espacio para firma física) ---
+    x_izq, x_der, ancho_col = 20, 115, 70
+    y_bloque = pdf.get_y()
+
+    pdf.image(ruta_firma, x=x_izq + 12, y=y_bloque, w=45)
+
+    y_linea = y_bloque + 32
+    pdf.set_y(y_linea)
+    pdf.set_x(x_izq); pdf.cell(ancho_col, 0, txt="", border='T', ln=0, align='C')
+    pdf.set_x(x_der); pdf.cell(ancho_col, 0, txt="", border='T', ln=1, align='C')
+
+    pdf.set_font("Arial", 'B', 11)
+    pdf.set_x(x_izq); pdf.cell(ancho_col, 8, txt="Firma del Supervisor", border=0, ln=0, align='C')
+    pdf.set_x(x_der); pdf.cell(ancho_col, 8, txt="Firma del Empleado", border=0, ln=1, align='C')
+
+    pdf.set_font("Arial", '', 9)
+    pdf.set_x(x_izq); pdf.cell(ancho_col, 6, txt="", border=0, ln=0, align='C')
+    pdf.set_x(x_der); pdf.cell(ancho_col, 6, txt=f"{empleado.nombres} {empleado.apellido_paterno} - DNI: {empleado.dni}", border=0, ln=1, align='C')
+
+    pdf.output(ruta_pdf)
+    if os.path.exists(ruta_firma): os.remove(ruta_firma)
+    subir_a_supabase_storage(ruta_pdf, os.path.basename(ruta_pdf))
+    asistencia.estado = "Sancionada"
+    db.add(models.Notificacion(mensaje=alerta, tipo="alerta"))
+    if empleado.correo:
+        db.add(models.ColaMensaje(
+            tipo="Email", destino=empleado.correo,
+            mensaje=f"Estimado(a) {empleado.nombres},\n\nSe adjunta de manera formal el documento {titulo_doc} correspondete a la falta del {datos.fecha}.\n\nAtentamente,\nRecursos Humanos.",
+            archivo_adjunto=ruta_pdf, estado="Pendiente"
+        ))
+    db.commit(); return {"mensaje": f"{titulo_doc} generado y encolado", "archivo": ruta_pdf}
+
+@app.get("/descargar_documento/{dni}/{fecha}")
+def descargar_documento(dni: str, fecha: str):
+    m = f"documentos_legales/Memo_{dni}_{fecha}.pdf"; d = f"documentos_legales/Despido_{dni}_{fecha}.pdf"
+    if os.path.exists(m): return FileResponse(path=m, filename=f"Memorandum_{dni}_{fecha}.pdf", media_type='application/pdf')
+    elif os.path.exists(d): return FileResponse(path=d, filename=f"Despido_{dni}_{fecha}.pdf", media_type='application/pdf')
+
+    # Si no está en disco local (ej: el servicio se reinició), lo buscamos en Supabase Storage
+    contenido = descargar_de_supabase_storage(f"Memo_{dni}_{fecha}.pdf")
+    nombre_descarga = f"Memorandum_{dni}_{fecha}.pdf"
+    if not contenido:
+        contenido = descargar_de_supabase_storage(f"Despido_{dni}_{fecha}.pdf")
+        nombre_descarga = f"Despido_{dni}_{fecha}.pdf"
+    if contenido:
+        return StreamingResponse(
+            io.BytesIO(contenido), media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={nombre_descarga}"}
+        )
+    raise HTTPException(status_code=404, detail="No existe.")
+
+@app.get("/notificaciones")
+def obtener_notificaciones(db: Session = Depends(get_db)):
+    return db.query(models.Notificacion).order_by(models.Notificacion.id.desc()).limit(50).all()
+
+@app.put("/notificaciones/leer")
+def marcar_notificaciones_leidas(db: Session = Depends(get_db)):
+    db.query(models.Notificacion).filter(models.Notificacion.leida == False).update({"leida": True}); db.commit(); return {"mensaje": "Leídas"}
+
+@app.post("/notificaciones")
+def crear_notificacion(datos: schemas.NotificacionCreate, db: Session = Depends(get_db)):
+    db.add(models.Notificacion(mensaje=datos.mensaje, tipo=datos.tipo)); db.commit(); return {"mensaje": "Ok"}
+
+@app.post("/sincronizar_correos")
+def sincronizar_correos(background_tasks: BackgroundTasks):
+    db_bg = SessionLocal()
+    try:
+        p = db_bg.query(models.ColaMensaje).filter(models.ColaMensaje.estado == "Pendiente").count()
+        if p > 0: background_tasks.add_task(procesar_cola_correos, db_bg); return {"mensaje": f"Sincronizando {p} correos en segundo plano."}
+        return {"mensaje": "No hay correos pendientes."}
+    finally: db_bg.close()
+
+@app.post("/sincronizar_nube")
+def sincronizar_nube(db: Session = Depends(get_db)):
+    pendientes = db.query(models.Asistencia).filter(models.Asistencia.sincronizado == False).all()
+    if not pendientes: return {"mensaje": "Base de datos local totalmente sincronizada."}
+    contador = 0
+    for asis in pendientes:
+        asis.sincronizado = True
+        contador += 1
+    db.commit()
+    db.add(models.Notificacion(mensaje=f"🌐 Sincronización masiva exitosa: {contador} asistencias subidas a la nube.", tipo="exito"))
+    db.commit()
+    return {"mensaje": f"Se sincronizaron {contador} registros de asistencia sin duplicados."}
+
+@app.get("/analitica/datos")
+def obtener_datos_analitica(db: Session = Depends(get_db)):
+    hoy = date.today()
+    dias, asistencias_7d, tardanzas_7d, faltas_7d = [], [], [], []
+    for i in range(6, -1, -1):
+        dia = hoy - timedelta(days=i)
+        dias.append(dia.strftime("%d/%m"))
+        asistencias_7d.append(db.query(models.Asistencia).filter(models.Asistencia.fecha == dia, models.Asistencia.estado == "Asistencia").count())
+        tardanzas_7d.append(db.query(models.Asistencia).filter(models.Asistencia.fecha == dia, models.Asistencia.estado == "Tardanza").count())
+        faltas_7d.append(db.query(models.Asistencia).filter(models.Asistencia.fecha == dia, models.Asistencia.estado.in_(["Falta", "Sancionada"])).count())
+    primer_mes = hoy.replace(day=1)
+    t_asis = db.query(models.Asistencia).filter(models.Asistencia.fecha >= primer_mes, models.Asistencia.estado == "Asistencia").count()
+    t_tard = db.query(models.Asistencia).filter(models.Asistencia.fecha >= primer_mes, models.Asistencia.estado == "Tardanza").count()
+    t_falt = db.query(models.Asistencia).filter(models.Asistencia.fecha >= primer_mes, models.Asistencia.estado.in_(["Falta", "Sancionada"])).count()
+    t_just = db.query(models.Asistencia).filter(models.Asistencia.fecha >= primer_mes, models.Asistencia.estado == "Justificada").count()
+    top_inf = db.query(models.Empleado.dni, models.Empleado.nombres, models.Empleado.apellido_paterno, func.sum(models.Asistencia.minutos_tardanza).label("total")).join(models.Asistencia).filter(models.Asistencia.fecha >= primer_mes, models.Asistencia.minutos_tardanza > 0).group_by(models.Empleado.id).order_by(func.sum(models.Asistencia.minutos_tardanza).desc()).limit(5).all()
+    return {
+        "tendencia": {"dias": dias, "asistencias": asistencias_7d, "tardanzas": tardanzas_7d, "faltas": faltas_7d},
+        "distribucion": [t_asis, t_tard, t_falt, t_just],
+        "top_infractores": [{"dni": r[0], "nombre": f"{r[1]} {r[2]}".strip().upper(), "minutos": int(r[3] or 0)} for r in top_inf]
+    }
+
+@app.get("/reporte/mensual/{periodo}")
+def descargar_reporte_mensual(periodo: str, db: Session = Depends(get_db)):
+    try: 
+        year, month = map(int, periodo.split('-'))
+    except ValueError: 
+        raise HTTPException(status_code=400, detail="Formato YYYY-MM requerido")
+        
+    fecha_inicio = date(year, month, 1)
+    _, last_day = monthrange(year, month)
+    fecha_fin = date(year, month, last_day)
+
+    asistencias = db.query(models.Asistencia).filter(models.Asistencia.fecha >= fecha_inicio, models.Asistencia.fecha <= fecha_fin).order_by(models.Asistencia.fecha.asc()).all()
+    
+    output = io.StringIO()
+    output.write('\ufeff') # 
+    writer = csv.writer(output, delimiter=';')  
+
+    writer.writerow(["DNI", "Apellidos y Nombres", "Fecha", "Hora Entrada", "Hora Salida", "Estado", "Tardanza (Min)", "Horas Extra (Min)", "Justificación"])
+
+    for a in asistencias:
+        if not a.empleado: 
+            continue
+            
+        nombre_completo = f"{a.empleado.nombres} {a.empleado.apellido_paterno} {a.empleado.apellido_materno}".strip().upper()
+        hora_ent = a.hora_entrada.strftime("%H:%M") if a.hora_entrada else "--:--"
+        hora_sal = a.hora_salida.strftime("%H:%M") if a.hora_salida else "--:--"
+        tardanza = int(a.minutos_tardanza or 0)
+        extra = int(a.minutos_extra or 0)
+        justificacion = a.justificacion_motivo if a.justificacion_motivo else "-"
+        
+        writer.writerow([
+            a.empleado.dni,
+            nombre_completo,
+            a.fecha.strftime("%Y-%m-%d"),
+            hora_ent,
+            hora_sal,
+            a.estado,
+            tardanza,
+            extra,
+            justificacion
+        ])
+
+    response = StreamingResponse(iter([output.getvalue()]), media_type="text/csv; charset=utf-8-sig")
+    response.headers["Content-Disposition"] = f"attachment; filename=Reporte_Asistencia_{periodo}.csv"
+    return response
+
+@app.get("/asistencias/monitor")
+def obtener_monitor_asistencias(db: Session = Depends(get_db)):
+    asistencias = db.query(models.Asistencia).order_by(models.Asistencia.fecha.desc(), models.Asistencia.id.desc()).all()
+    return [{"dni": a.empleado.dni, "nombre_completo": f"{a.empleado.nombres} {a.empleado.apellido_paterno}".strip().upper(), "fecha": a.fecha.strftime("%Y-%m-%d"), "hora_entrada": a.hora_entrada.strftime("%H:%M") if a.hora_entrada else "--:--", "hora_salida": a.hora_salida.strftime("%H:%M") if a.hora_salida else "--:--", "minutos_tardanza": int(a.minutos_tardanza or 0), "horas_extra": f"{int((a.minutos_extra or 0)//60)}h {int((a.minutos_extra or 0)%60)}m" if (a.minutos_extra or 0) > 0 else "0h", "estado": a.estado} for a in asistencias if a.empleado]
+
+@app.get("/reporte/empleado/{dni}/{periodo}")
+def obtener_reporte_mensual_empleado(dni: str, periodo: str, db: Session = Depends(get_db)):
+    try: 
+        year, month = map(int, periodo.split('-'))
+    except ValueError: 
+        raise HTTPException(status_code=400, detail="Formato YYYY-MM requerido")
+        
+    fecha_inicio = date(year, month, 1)
+    _, last_day = monthrange(year, month)
+    fecha_fin = date(year, month, last_day)
+
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    asistencias = db.query(models.Asistencia).filter(
+        models.Asistencia.empleado_id == empleado.id,
+        models.Asistencia.fecha >= fecha_inicio,
+        models.Asistencia.fecha <= fecha_fin
+    ).order_by(models.Asistencia.fecha.asc()).all()
+
+    c_asis = 0
+    c_tard = 0
+    c_falt = 0
+    c_just = 0
+    detalle = []
+
+    for a in asistencias:
+        est = a.estado
+        if est == "Asistencia": c_asis += 1
+        elif est == "Tardanza": c_tard += 1
+        elif est in ["Falta", "Sancionada"]: c_falt += 1
+        elif est == "Justificada": c_just += 1
+
+        detalle.append({
+            "fecha": a.fecha.strftime("%Y-%m-%d"),
+            "entrada": a.hora_entrada.strftime("%H:%M") if a.hora_entrada else "--:--",
+            "salida": a.hora_salida.strftime("%H:%M") if a.hora_salida else "--:--",
+            "estado": est,
+            "tardanza": int(a.minutos_tardanza or 0),
+            "extra": int(a.minutos_extra or 0)
+        })
+
+    return {
+        "empleado": f"{empleado.nombres} {empleado.apellido_paterno} {empleado.apellido_materno}".strip().upper(),
+        "dni": empleado.dni,
+        "resumen": {
+            "asistencias": c_asis,
+            "tardanzas": c_tard,
+            "faltas": c_falt,
+            "justificadas": c_just
+        },
+        "detalle": detalle
+    }
+
+@app.get("/reporte/empleado/{dni}/{periodo}/excel")
+def descargar_reporte_mensual_empleado_excel(dni: str, periodo: str, db: Session = Depends(get_db)):
+    try:
+        year, month = map(int, periodo.split('-'))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato YYYY-MM requerido")
+
+    fecha_inicio = date(year, month, 1)
+    _, last_day = monthrange(year, month)
+    fecha_fin = date(year, month, last_day)
+
+    empleado = db.query(models.Empleado).filter(models.Empleado.dni == dni).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    asistencias = db.query(models.Asistencia).filter(
+        models.Asistencia.empleado_id == empleado.id,
+        models.Asistencia.fecha >= fecha_inicio,
+        models.Asistencia.fecha <= fecha_fin
+    ).order_by(models.Asistencia.fecha.asc()).all()
+
+    c_asis = c_tard = c_falt = c_just = 0
+    for a in asistencias:
+        if a.estado == "Asistencia": c_asis += 1
+        elif a.estado == "Tardanza": c_tard += 1
+        elif a.estado in ["Falta", "Sancionada"]: c_falt += 1
+        elif a.estado == "Justificada": c_just += 1
+
+    nombre_completo = f"{empleado.nombres} {empleado.apellido_paterno} {empleado.apellido_materno}".strip().upper()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Reporte {periodo}"
+
+    azul = PatternFill(start_color="2C3E50", end_color="2C3E50", fill_type="solid")
+    verde = PatternFill(start_color="27AE60", end_color="27AE60", fill_type="solid")
+    fuente_blanca_negrita = Font(color="FFFFFF", bold=True, size=12)
+    fuente_negrita = Font(bold=True)
+    centrado = Alignment(horizontal="center", vertical="center")
+    borde_fino = Border(
+        left=Side(style="thin", color="D0D0D0"), right=Side(style="thin", color="D0D0D0"),
+        top=Side(style="thin", color="D0D0D0"), bottom=Side(style="thin", color="D0D0D0")
+    )
+
+    ws.merge_cells("A1:F1")
+    ws["A1"] = f"Reporte Mensual de Asistencia - {periodo}"
+    ws["A1"].font = fuente_blanca_negrita
+    ws["A1"].fill = azul
+    ws["A1"].alignment = centrado
+    ws.row_dimensions[1].height = 24
+
+    ws["A2"] = "Empleado:"; ws["A2"].font = fuente_negrita
+    ws["B2"] = nombre_completo
+    ws["A3"] = "DNI:"; ws["A3"].font = fuente_negrita
+    ws["B3"] = empleado.dni
+
+    resumen_labels = ["Asistencias", "Tardanzas", "Faltas", "Justificadas"]
+    resumen_valores = [c_asis, c_tard, c_falt, c_just]
+    for i, (lbl, val) in enumerate(zip(resumen_labels, resumen_valores)):
+        col = i + 1
+        celda_lbl = ws.cell(row=5, column=col, value=lbl)
+        celda_lbl.font = fuente_blanca_negrita
+        celda_lbl.fill = verde
+        celda_lbl.alignment = centrado
+        celda_val = ws.cell(row=6, column=col, value=val)
+        celda_val.font = Font(bold=True, size=13)
+        celda_val.alignment = centrado
+
+    encabezados = ["Fecha", "Entrada", "Salida", "Estado", "Tardanza (min)", "Horas Extra (min)"]
+    fila_encabezado = 8
+    for col, titulo in enumerate(encabezados, start=1):
+        celda = ws.cell(row=fila_encabezado, column=col, value=titulo)
+        celda.font = fuente_blanca_negrita
+        celda.fill = azul
+        celda.alignment = centrado
+        celda.border = borde_fino
+
+    fila = fila_encabezado + 1
+    for a in asistencias:
+        hora_ent = a.hora_entrada.strftime("%H:%M") if a.hora_entrada else "--:--"
+        hora_sal = a.hora_salida.strftime("%H:%M") if a.hora_salida else "--:--"
+        valores = [a.fecha.strftime("%Y-%m-%d"), hora_ent, hora_sal, a.estado, int(a.minutos_tardanza or 0), int(a.minutos_extra or 0)]
+        for col, val in enumerate(valores, start=1):
+            celda = ws.cell(row=fila, column=col, value=val)
+            celda.alignment = centrado
+            celda.border = borde_fino
+        fila += 1
+
+    if len(asistencias) == 0:
+        ws.merge_cells(start_row=fila, start_column=1, end_row=fila, end_column=6)
+        celda = ws.cell(row=fila, column=1, value="No hay registros para este periodo.")
+        celda.alignment = centrado
+
+    anchos = [14, 12, 12, 16, 16, 18]
+    for i, ancho in enumerate(anchos, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = ancho
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    response = StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename=Reporte_{empleado.dni}_{periodo}.xlsx"
+    return response
+
+app.mount("/", StaticFiles(directory=".", html=True), name="static")
