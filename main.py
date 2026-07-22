@@ -546,4 +546,4 @@ def descargar_reporte_mensual_empleado_excel(dni: str, periodo: str, db: Session
     response.headers["Content-Disposition"] = f"attachment; filename=Reporte_{empleado.dni}_{periodo}.xlsx"
     return response
 
-app.mount("/", StaticFiles(directory=".", html=True), name="static")
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
